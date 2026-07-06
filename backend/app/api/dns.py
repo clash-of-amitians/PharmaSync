@@ -8,10 +8,19 @@ from app.services.dns_service import (
 )
 from app.core.config import settings
 
+from app.services.dns_monitor_service import get_monitor_status
+
 router = APIRouter(
     prefix="/dns",
     tags=["DNS Failover Management"]
 )
+
+@router.get("/monitor", summary="Get current status of the DNS health monitor")
+def monitor_status():
+    """
+    Returns the current health status of the DNS Outage Monitor.
+    """
+    return get_monitor_status()
 
 @router.get("/zones", summary="Get DNS Zone records")
 def get_zones(zone_name: str = Query(None)):

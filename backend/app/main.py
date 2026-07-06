@@ -7,6 +7,7 @@ from app.api.failed_events import router as failed_event_router
 from app.api.dns import router as dns_router
 from app.services.failed_event_service import auto_replay_background_worker
 from app.services.dns_service import init_dns_config
+from app.services.dns_monitor_service import dns_outage_monitor_worker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -25,14 +26,19 @@ async def lifespan(app: FastAPI):
     # Start auto-replay background task
     worker_task = asyncio.create_task(auto_replay_background_worker())
     
+    # Start DNS Monitor background task
+    dns_monitor_task = asyncio.create_task(dns_outage_monitor_worker())
+    
     yield
     
-    # Cancel background worker task on shutdown
+    # Cancel tasks on shutdown
     worker_task.cancel()
+    dns_monitor_task.cancel()
+    
     try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+        await asyncio.gather(worker_task, dns_monitor_task, return_exceptions=True)
+    except Exception as e:
+        print(f"Error shutting down background tasks: {e}")
 
 app = FastAPI(
     title="PharmaSync API",
