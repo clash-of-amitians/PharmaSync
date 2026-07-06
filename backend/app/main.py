@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from app.database.dynamodb import init_db
 from app.api.failed_events import router as failed_event_router
@@ -8,6 +9,7 @@ from app.api.dns import router as dns_router
 from app.services.failed_event_service import auto_replay_background_worker
 from app.services.dns_service import init_dns_config
 from app.services.dns_monitor_service import dns_outage_monitor_worker
+from app.services.pipeline_simulator import simulate_pipeline_metrics_worker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,14 +31,18 @@ async def lifespan(app: FastAPI):
     # Start DNS Monitor background task
     dns_monitor_task = asyncio.create_task(dns_outage_monitor_worker())
     
+    # Start CI/CD metrics simulator background task
+    pipeline_sim_task = asyncio.create_task(simulate_pipeline_metrics_worker())
+    
     yield
     
     # Cancel tasks on shutdown
     worker_task.cancel()
     dns_monitor_task.cancel()
+    pipeline_sim_task.cancel()
     
     try:
-        await asyncio.gather(worker_task, dns_monitor_task, return_exceptions=True)
+        await asyncio.gather(worker_task, dns_monitor_task, pipeline_sim_task, return_exceptions=True)
     except Exception as e:
         print(f"Error shutting down background tasks: {e}")
 
@@ -64,3 +70,11 @@ def health():
     return {
         "status": "healthy"
     }
+
+
+@app.get("/metrics", summary="Prometheus Metrics Endpoint")
+def metrics():
+    """
+    Exposes raw Prometheus metrics to be scraped.
+    """
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
