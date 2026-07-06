@@ -46,6 +46,17 @@ def process_order_event(event_id: str, event_type: str, payload: dict) -> bool:
         import random
         time.sleep(random.uniform(0.02, 0.08))
         
+        # Automatically trigger regional inventory sync if SKU details are in payload
+        if "sku" in payload and "target_region" in payload:
+            from app.services.inventory_sync_client import trigger_regional_inventory_sync
+            trigger_regional_inventory_sync(
+                sku=payload["sku"],
+                item_name=payload.get("item_name", "Unnamed Medicine"),
+                quantity=payload.get("quantity", 0),
+                region=payload["target_region"],
+                compliance_data=payload.get("compliance_data")
+            )
+            
         print(f"Successfully processed event {event_id} of type {event_type}!")
         return True
     except Exception as e:
