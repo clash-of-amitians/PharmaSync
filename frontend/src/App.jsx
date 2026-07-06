@@ -35,7 +35,7 @@ const parsePrometheusMetrics = (text) => {
 
 function App() {
   // Navigation
-  const [activeView, setActiveView] = useState('events'); // 'events' | 'dns' | 'cicd' | 'order_metrics'
+  const [activeView, setActiveView] = useState('events'); // 'events' | 'dns' | 'cicd' | 'order_metrics' | 'bandwidth_cost'
   
   // Authorization State (AC3)
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -71,6 +71,18 @@ function App() {
   
   // Order Events Telemetry State
   const [orderMetricsHistory, setOrderMetricsHistory] = useState([]);
+
+  // Bandwidth Cost Optimization State (PRJ-B0FC-0036)
+  const [networkLinks, setNetworkLinks] = useState([
+    { id: 'lnk-us-east-1', name: 'US East DC 1', region: 'us-east', type: 'DirectConnect', speed: 850, rate: 0.02, totalData: 1250, accruedCost: 25.00 },
+    { id: 'lnk-us-east-2', name: 'US East VPN', region: 'us-east', type: 'VPN', speed: 120, rate: 0.08, totalData: 310, accruedCost: 24.80 },
+    { id: 'lnk-us-west-1', name: 'US West DC 2', region: 'us-west', type: 'DirectConnect', speed: 640, rate: 0.03, totalData: 940, accruedCost: 28.20 },
+    { id: 'lnk-eu-west-1', name: 'EU West VPN', region: 'eu-west', type: 'VPN', speed: 110, rate: 0.09, totalData: 410, accruedCost: 36.90 },
+    { id: 'lnk-eu-west-2', name: 'EU West Satellite', region: 'eu-west', type: 'Satellite', speed: 45, rate: 0.25, totalData: 85, accruedCost: 21.25 },
+    { id: 'lnk-ap-south-1', name: 'AP South Broadband', region: 'ap-south', type: 'Broadband', speed: 300, rate: 0.05, totalData: 600, accruedCost: 30.00 }
+  ]);
+  const [filterRegion, setFilterRegion] = useState('All');
+  const [filterType, setFilterType] = useState('All');
 
   // Transaction form state
   const [formEventId, setFormEventId] = useState('');
@@ -186,6 +198,24 @@ function App() {
           return [...prev, { time: now, successCount, failureCount, totalCount, failureRate, avgLatency }].slice(-20);
         });
       }
+
+      // 7. Simulating Bandwidth Cost Accrual on each poll tick
+      setNetworkLinks(prev => prev.map(lnk => {
+        const speedDelta = Math.floor(Math.random() * 21) - 10; // -10 to +10 Mbps
+        const newSpeed = Math.max(lnk.speed + speedDelta, 10);
+        
+        // Accumulate data: Speed (Mbps) * 3s polling period / 8 bits / 1024 to get GB
+        const dataDelta = (newSpeed * 3) / 8192;
+        const newTotalData = lnk.totalData + dataDelta;
+        const newAccruedCost = lnk.accruedCost + (dataDelta * lnk.rate);
+        
+        return {
+          ...lnk,
+          speed: newSpeed,
+          totalData: newTotalData,
+          accruedCost: newAccruedCost
+        };
+      }));
     } catch (err) {
       console.error("API Polling Error:", err);
     }
@@ -429,6 +459,21 @@ function App() {
     return total > 0 ? (failure / total) * 100 : 0;
   };
 
+  // Bandwidth Cost Optimization Dashboard Calculations (PRJ-B0FC-0036)
+  const filteredLinks = networkLinks.filter(lnk => {
+    const matchesRegion = filterRegion === 'All' || lnk.region === filterRegion;
+    const matchesType = filterType === 'All' || lnk.type === filterType;
+    return matchesRegion && matchesType;
+  });
+
+  const totalFilteredData = filteredLinks.reduce((sum, lnk) => sum + lnk.totalData, 0);
+  const totalFilteredCost = filteredLinks.reduce((sum, lnk) => sum + lnk.accruedCost, 0);
+  const averageFilteredRate = totalFilteredData > 0 ? totalFilteredCost / totalFilteredData : 0;
+
+  const optimalLink = filteredLinks.length > 0 
+    ? [...filteredLinks].sort((a, b) => a.rate - b.rate)[0] 
+    : null;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white relative overflow-hidden">
       {/* Background gradients */}
@@ -502,6 +547,16 @@ function App() {
                 }`}
               >
                 Order Metrics
+              </button>
+              <button
+                onClick={() => setActiveView('bandwidth_cost')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeView === 'bandwidth_cost'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Cost Optimizer
               </button>
             </div>
 
@@ -763,7 +818,7 @@ function App() {
                                     {evt.event_id}
                                   </td>
                                   <td className="py-3.5 px-4">
-                                    <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-xs font-semibold border border-slate-700">
+                                    <span className="px-2 py-0.5 rounded-md bg-slate-850 text-slate-300 text-xs font-semibold border border-slate-700">
                                       {evt.event_type}
                                     </span>
                                   </td>
@@ -849,7 +904,7 @@ function App() {
                                   {evt.event_id}
                                 </td>
                                 <td className="py-3.5 px-4">
-                                  <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-xs font-semibold border border-slate-700">
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-855 text-slate-300 text-xs font-semibold border border-slate-700">
                                     {evt.event_type}
                                   </span>
                                 </td>
@@ -1016,7 +1071,7 @@ function App() {
                 <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
                 
                 <div>
-                  <h3 className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Target Hostname</h3>
+                  <h3 className="text-xs text-slate-505 font-bold uppercase tracking-wider mb-2">Target Hostname</h3>
                   <p className="text-2xl font-black text-white font-mono tracking-tight">api.pharmasync.com</p>
                   <p className="text-xs text-slate-400 mt-1">Zone: <span className="text-indigo-400 font-bold">pharmasync.com</span></p>
                 </div>
@@ -1043,7 +1098,7 @@ function App() {
                 <h2 className="text-lg font-bold text-white mb-4 border-b border-slate-800 pb-3 flex justify-between items-center">
                   <span>DNS Log Auditing</span>
                   <span className="text-xs text-slate-505 flex items-center gap-1">
-                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
                     Audit trail live
                   </span>
                 </h2>
@@ -1175,7 +1230,7 @@ function App() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
                       </svg>
                     </div>
-                    <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Data Downloaded</p>
+                    <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Total Data Downloaded</p>
                     <p className="text-3xl font-black text-emerald-400 mt-2 font-mono">
                       {formatBytes(calculateTotalBandwidth(parsedMetrics, 'download'))}
                     </p>
@@ -1201,7 +1256,7 @@ function App() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
                       </svg>
                     </div>
-                    <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Active Running Builds</p>
+                    <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Active Running Builds</p>
                     <div className="flex items-center gap-2 mt-2">
                       <span className="relative flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
@@ -1347,7 +1402,7 @@ function App() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
-                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Throughput</p>
+                <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Total Throughput</p>
                 <p className="text-3xl font-black text-emerald-400 mt-2 font-mono">
                   {calculateOrderMetric(parsedMetrics, 'SUCCESS') + calculateOrderMetric(parsedMetrics, 'FAILURE')}
                 </p>
@@ -1360,7 +1415,7 @@ function App() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
                 </div>
-                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Failures</p>
+                <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Total Failures</p>
                 <p className="text-3xl font-black text-rose-400 mt-2 font-mono">
                   {calculateOrderMetric(parsedMetrics, 'FAILURE')}
                 </p>
@@ -1398,7 +1453,7 @@ function App() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
-                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Avg Processing Latency</p>
+                <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Avg Processing Latency</p>
                 <p className="text-3xl font-black text-blue-400 mt-2 font-mono">
                   {orderMetricsHistory.length > 0 ? orderMetricsHistory[orderMetricsHistory.length - 1].avgLatency.toFixed(0) : '0'} ms
                 </p>
@@ -1415,7 +1470,7 @@ function App() {
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-rose-300">High Event Processing Failure Rate Warning</h4>
-                  <p className="text-xs text-rose-400 mt-1">
+                  <p className="text-xs text-rose-450 mt-1">
                     System failure rate is at {getFailureRate().toFixed(1)}%, exceeding the SLA limit of 20%. Please investigate downstream connectivity or replay failed logs.
                   </p>
                 </div>
@@ -1473,7 +1528,7 @@ function App() {
                   ) : (
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="border-b border-slate-850 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
+                        <tr className="border-b border-slate-850 text-[10px] text-slate-550 uppercase tracking-wider font-bold">
                           <th className="py-2 px-1">Event Type</th>
                           <th className="py-2 px-1">Status</th>
                           <th className="py-2 px-1 text-right">Transactions</th>
@@ -1500,6 +1555,198 @@ function App() {
                               </td>
                             </tr>
                           ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* VIEW 5: BANDWIDTH COST OPTIMIZATION DASHBOARD (PRJ-B0FC-0036) */}
+        {activeView === 'bandwidth_cost' && (
+          <div className="flex flex-col gap-8">
+            
+            {/* Filters Row */}
+            <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 shadow-md flex flex-col md:flex-row justify-between items-center gap-4">
+              <div className="flex items-center gap-3">
+                <span className="p-2 bg-indigo-500/10 text-indigo-400 border border-indigo-500/15 rounded-xl font-bold text-xs uppercase">
+                  Filters
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Interactive Link Filters</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Filter link telemetry metrics by region and type</p>
+                </div>
+              </div>
+
+              <div className="flex gap-4 w-full md:w-auto">
+                <div className="flex-grow md:flex-grow-0">
+                  <label className="block text-[9px] text-slate-500 uppercase tracking-wider font-semibold mb-1">Region</label>
+                  <select
+                    value={filterRegion}
+                    onChange={(e) => setFilterRegion(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="All">All Regions</option>
+                    <option value="us-east">US East</option>
+                    <option value="us-west">US West</option>
+                    <option value="eu-west">EU West</option>
+                    <option value="ap-south">AP South</option>
+                  </select>
+                </div>
+
+                <div className="flex-grow md:flex-grow-0">
+                  <label className="block text-[9px] text-slate-500 uppercase tracking-wider font-semibold mb-1">Link Type</label>
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="All">All Types</option>
+                    <option value="DirectConnect">Direct Connect</option>
+                    <option value="VPN">VPN Gateway</option>
+                    <option value="Broadband">Broadband</option>
+                    <option value="Satellite">Satellite Link</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-emerald-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Bandwidth Transferred</p>
+                <p className="text-3xl font-black text-emerald-400 mt-2 font-mono">
+                  {totalFilteredData.toFixed(1)} <span className="text-sm font-semibold">GB</span>
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Aggregated filtered link data</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-indigo-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Accumulative Cost</p>
+                <p className="text-3xl font-black text-indigo-400 mt-2 font-mono">
+                  ${totalFilteredCost.toFixed(2)}
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Billed rate * volume consumed</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-violet-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Average Cost Rate</p>
+                <p className="text-3xl font-black text-violet-400 mt-2 font-mono">
+                  ${averageFilteredRate.toFixed(3)} <span className="text-sm font-semibold">/ GB</span>
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Weighted average efficiency</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md flex flex-col justify-between">
+                <div>
+                  <p className="text-[10px] text-slate-555 uppercase font-extrabold tracking-wider">Optimal Route Recommendation</p>
+                  {optimalLink ? (
+                    <div className="mt-2">
+                      <p className="text-xs font-bold text-emerald-400 font-mono">{optimalLink.name}</p>
+                      <p className="text-[9px] text-slate-400">Lowest cost rate: <span className="text-emerald-500 font-semibold">${optimalLink.rate.toFixed(2)}/GB</span></p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 mt-2 italic">No link matches filters</p>
+                  )}
+                </div>
+                <div className="text-[8px] text-slate-500 uppercase tracking-widest font-bold border-t border-slate-850 pt-1.5 mt-2">
+                  Routing efficiency optimizer
+                </div>
+              </div>
+
+            </div>
+
+            {/* UI Charts & Details Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              
+              {/* Cost Share Chart (Accrued cost visual bars) */}
+              <div className="lg:col-span-6 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                <h3 className="text-sm font-bold text-white mb-1">Accrued Cost Breakdown</h3>
+                <p className="text-[10px] text-slate-500 mb-5 uppercase tracking-wider font-semibold">
+                  Billing cost distribution across network links
+                </p>
+
+                <div className="bg-slate-950 rounded-xl p-5 flex-grow flex flex-col justify-center min-h-[220px]">
+                  {filteredLinks.length === 0 ? (
+                    <p className="text-xs text-slate-505 italic text-center py-8">Select different filter criteria to populate chart.</p>
+                  ) : (
+                    filteredLinks.map((lnk, idx) => {
+                      const maxCost = Math.max(...filteredLinks.map(l => l.accruedCost), 1);
+                      const pct = (lnk.accruedCost / maxCost) * 100;
+                      return (
+                        <div key={lnk.id} className="flex flex-col gap-1 mb-4 last:mb-0">
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-slate-300 font-bold">{lnk.name} ({lnk.type})</span>
+                            <span className="font-extrabold text-indigo-400">${lnk.accruedCost.toFixed(2)}</span>
+                          </div>
+                          <div className="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-850/50 shadow-inner">
+                            <div 
+                              className="bg-gradient-to-r from-indigo-500 to-violet-500 h-full rounded-full transition-all duration-500" 
+                              style={{ width: `${pct}%` }} 
+                            />
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Network Links Cost Grid Table */}
+              <div className="lg:col-span-6 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                <h3 className="text-sm font-bold text-white mb-1">Network Links Cost Analyzer</h3>
+                <p className="text-[10px] text-slate-500 mb-5 uppercase tracking-wider font-semibold">
+                  Real-time link speed and cost details
+                </p>
+
+                <div className="flex-grow overflow-y-auto max-h-[250px] pr-1">
+                  {filteredLinks.length === 0 ? (
+                    <p className="text-xs text-slate-505 italic text-center py-8">No links matching the current filters.</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-850 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
+                          <th className="py-2.5 px-1">Link Name</th>
+                          <th className="py-2.5 px-1">Region</th>
+                          <th className="py-2.5 px-1">Speed</th>
+                          <th className="py-2.5 px-1 text-right">Cost/GB</th>
+                          <th className="py-2.5 px-1 text-right">Accrued Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredLinks.map((lnk) => (
+                          <tr key={lnk.id} className="border-b border-slate-850/40 hover:bg-slate-900/10 transition">
+                            <td className="py-2.5 px-1 font-bold text-slate-200">{lnk.name}</td>
+                            <td className="py-2.5 px-1 uppercase text-[9px]">
+                              <span className="px-1.5 py-0.5 rounded bg-slate-850 text-slate-400 font-bold border border-slate-800">
+                                {lnk.region}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-1 font-mono text-indigo-400 font-semibold">{lnk.speed} Mbps</td>
+                            <td className="py-2.5 px-1 text-right font-mono text-slate-300">${lnk.rate.toFixed(2)}</td>
+                            <td className="py-2.5 px-1 text-right font-mono text-emerald-400 font-black">${lnk.accruedCost.toFixed(2)}</td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   )}
