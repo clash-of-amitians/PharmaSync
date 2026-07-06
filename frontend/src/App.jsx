@@ -119,7 +119,12 @@ function App() {
       const netRes = await fetch('/events/network');
       if (netRes.ok) {
         const netData = await netRes.json();
-        if (netData.network_online !== networkOnline) {
+        
+        // If we recovered from a connection error, restore network state
+        if (!networkOnline && netData.network_online) {
+          setNetworkOnline(true);
+          addTerminalLog("⚡ API Sync Connection restored successfully.");
+        } else if (netData.network_online !== networkOnline) {
           setNetworkOnline(netData.network_online);
           addTerminalLog(`Auto-sync: Connectivity status synced to ${netData.network_online ? 'ONLINE' : 'OFFLINE'}`);
         }
@@ -207,6 +212,11 @@ function App() {
       }
     } catch (err) {
       console.error("API Polling Error:", err);
+      // Gracefully handle connectivity errors
+      if (networkOnline) {
+        setNetworkOnline(false);
+        addTerminalLog(`⚠️ Sync connection interrupted: ${err.message}. Retrying...`);
+      }
     }
   };
 
