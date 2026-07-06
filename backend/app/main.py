@@ -53,9 +53,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+from app.api.bandwidth import router as bandwidth_router
+
 # Register API routes
 app.include_router(failed_event_router)
 app.include_router(dns_router)
+app.include_router(bandwidth_router)
 
 
 @app.get("/")

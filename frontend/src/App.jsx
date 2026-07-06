@@ -199,23 +199,12 @@ function App() {
         });
       }
 
-      // 7. Simulating Bandwidth Cost Accrual on each poll tick
-      setNetworkLinks(prev => prev.map(lnk => {
-        const speedDelta = Math.floor(Math.random() * 21) - 10; // -10 to +10 Mbps
-        const newSpeed = Math.max(lnk.speed + speedDelta, 10);
-        
-        // Accumulate data: Speed (Mbps) * 3s polling period / 8 bits / 1024 to get GB
-        const dataDelta = (newSpeed * 3) / 8192;
-        const newTotalData = lnk.totalData + dataDelta;
-        const newAccruedCost = lnk.accruedCost + (dataDelta * lnk.rate);
-        
-        return {
-          ...lnk,
-          speed: newSpeed,
-          totalData: newTotalData,
-          accruedCost: newAccruedCost
-        };
-      }));
+      // 7. Fetch Bandwidth and Cost metrics from Monitoring and Billing APIs
+      const bandwidthRes = await fetch('/bandwidth/links');
+      if (bandwidthRes.ok) {
+        const bandwidthData = await bandwidthRes.json();
+        setNetworkLinks(bandwidthData.links || []);
+      }
     } catch (err) {
       console.error("API Polling Error:", err);
     }

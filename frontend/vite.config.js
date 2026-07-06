@@ -21,6 +21,14 @@ export default defineConfig({
       '/dns': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+      },
+      '/bandwidth': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/metrics': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
       }
     }
   }
