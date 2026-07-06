@@ -8,6 +8,22 @@ from app.core.config import settings
 USE_FALLBACK_DB = False
 fallback_db = {}  # In-memory dictionary to store events locally
 
+# In-memory store for DNS Failover simulation
+fallback_dns_zones = {
+    settings.DNS_ZONE_NAME: {
+        "zone_name": settings.DNS_ZONE_NAME,
+        "records": [
+            {
+                "name": settings.DNS_RECORD_NAME,
+                "type": "A",
+                "value": settings.PRIMARY_LINK_IP,
+                "ttl": 10
+            }
+        ]
+    }
+}
+fallback_dns_logs = []
+
 def get_dynamodb_resource(timeout=None):
     """
     Returns a DynamoDB resource instance configured based on settings.
@@ -81,6 +97,41 @@ def init_db():
             WaiterConfig={"Delay": 1, "MaxAttempts": 3}
         )
         print(f"Table '{table_name}' created successfully.")
+        
+        # Create DNSZones Table
+        try:
+            dns_zones_table = dynamodb.create_table(
+                TableName="DNSZones",
+                KeySchema=[{"AttributeName": "zone_name", "KeyType": "HASH"}],
+                AttributeDefinitions=[{"AttributeName": "zone_name", "AttributeType": "S"}],
+                ProvisionedThroughput={"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+            )
+            dns_zones_table.meta.client.get_waiter("table_exists").wait(TableName="DNSZones")
+            print("DNSZones table created successfully.")
+            # Seed default zone
+            dynamodb.Table("DNSZones").put_item(Item=fallback_dns_zones[settings.DNS_ZONE_NAME])
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceInUseException":
+                pass
+            else:
+                raise e
+
+        # Create DNSLogs Table
+        try:
+            dns_logs_table = dynamodb.create_table(
+                TableName="DNSLogs",
+                KeySchema=[{"AttributeName": "log_id", "KeyType": "HASH"}],
+                AttributeDefinitions=[{"AttributeName": "log_id", "AttributeType": "S"}],
+                ProvisionedThroughput={"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+            )
+            dns_logs_table.meta.client.get_waiter("table_exists").wait(TableName="DNSLogs")
+            print("DNSLogs table created successfully.")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceInUseException":
+                pass
+            else:
+                raise e
+                
     except ClientError as e:
         if e.response["Error"]["Code"] == "ResourceInUseException":
             print(f"Table '{table_name}' already exists.")
@@ -247,3 +298,84 @@ def delete_failed_event(event_id: str) -> bool:
             del fallback_db[event_id]
             return True
         return False
+
+# DNS DB Helper Functions
+def get_dns_zone(zone_name: str) -> dict | None:
+    """
+    Retrieves the DNS Zone document containing records.
+    """
+    if USE_FALLBACK_DB:
+        return fallback_dns_zones.get(zone_name)
+    
+    dynamodb = get_dynamodb_resource()
+    try:
+        table = dynamodb.Table("DNSZones")
+        response = table.get_item(Key={"zone_name": zone_name})
+        return response.get("Item")
+    except Exception as e:
+        print(f"Warning: DynamoDB get DNS Zone failed: {e}. Falling back.")
+        return fallback_dns_zones.get(zone_name)
+
+def save_dns_zone(zone: dict):
+    """
+    Saves/Updates the DNS Zone document containing records.
+    """
+    if USE_FALLBACK_DB:
+        fallback_dns_zones[zone["zone_name"]] = zone
+        return zone
+        
+    dynamodb = get_dynamodb_resource()
+    try:
+        table = dynamodb.Table("DNSZones")
+        table.put_item(Item=zone)
+    except Exception as e:
+        print(f"Warning: DynamoDB save DNS Zone failed: {e}. Falling back.")
+        fallback_dns_zones[zone["zone_name"]] = zone
+    return zone
+
+def save_dns_log(log_entry: dict):
+    """
+    Saves a DNS update log entry.
+    """
+    # Ensure timestamp is string for serialization
+    if "timestamp" in log_entry and not isinstance(log_entry["timestamp"], str):
+        log_entry["timestamp"] = log_entry["timestamp"].isoformat()
+        
+    # Generate log_id if not present
+    if "log_id" not in log_entry:
+        import uuid
+        log_entry["log_id"] = str(uuid.uuid4())
+        
+    if USE_FALLBACK_DB:
+        fallback_dns_logs.append(log_entry)
+        # Keep logs sorted by timestamp descending
+        fallback_dns_logs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        return log_entry
+        
+    dynamodb = get_dynamodb_resource()
+    try:
+        table = dynamodb.Table("DNSLogs")
+        table.put_item(Item=log_entry)
+    except Exception as e:
+        print(f"Warning: DynamoDB save DNS Log failed: {e}. Falling back.")
+        fallback_dns_logs.append(log_entry)
+        fallback_dns_logs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    return log_entry
+
+def get_dns_logs(limit: int = 50) -> list[dict]:
+    """
+    Retrieves all DNS logs sorted by timestamp (newest first).
+    """
+    if USE_FALLBACK_DB:
+        return fallback_dns_logs[:limit]
+        
+    dynamodb = get_dynamodb_resource()
+    try:
+        table = dynamodb.Table("DNSLogs")
+        response = table.scan(Limit=limit)
+        items = response.get("Items", [])
+        items.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        return items[:limit]
+    except Exception as e:
+        print(f"Warning: DynamoDB get DNS Logs failed: {e}. Falling back.")
+        return fallback_dns_logs[:limit]

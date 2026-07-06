@@ -17,6 +17,10 @@ export default defineConfig({
       '/events': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+      },
+      '/dns': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
       }
     }
   }

@@ -24,4 +24,10 @@ class Settings:
     AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "dummy" if os.getenv("ENV", "development") == "development" else "")
     AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "dummy" if os.getenv("ENV", "development") == "development" else "")
 
+    # DNS Failover Simulation Settings
+    PRIMARY_LINK_IP: str = os.getenv("PRIMARY_LINK_IP", "10.0.1.10")
+    BACKUP_LINK_IP: str = os.getenv("BACKUP_LINK_IP", "10.0.2.20")
+    DNS_RECORD_NAME: str = os.getenv("DNS_RECORD_NAME", "api.pharmasync.com")
+    DNS_ZONE_NAME: str = os.getenv("DNS_ZONE_NAME", "pharmasync.com")
+
 settings = Settings()
