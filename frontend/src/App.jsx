@@ -86,18 +86,38 @@ function App() {
     setVdiLoading(true);
     setVdiAuthError('');
     
-    // Simulate encryption key exchange delay
-    await new Promise(r => setTimeout(r, 1000));
-    
-    if (vdiUsername === 'operator1' && vdiPassword === 'securepass') {
-      setVdiAuthenticated(true);
-      sessionStorage.setItem('vdi_auth', 'true');
-      addTerminalLog("🖥️ VDI Secure Session initiated successfully for operator1.");
-    } else {
-      setVdiAuthError("Invalid username or password. Connection rejected.");
-      addTerminalLog("⚠️ VDI Secure Authentication attempt failed: unauthorized credentials.");
+    try {
+      const response = await fetch('/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          username: vdiUsername,
+          password: vdiPassword
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setVdiAuthenticated(true);
+        sessionStorage.setItem('vdi_auth', 'true');
+        sessionStorage.setItem('vdi_token', data.token);
+        sessionStorage.setItem('vdi_user', data.username);
+        sessionStorage.setItem('vdi_role', data.role);
+        addTerminalLog(`🖥️ VDI Secure Session initiated: ${data.username} (${data.role}).`);
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: 'Authentication handshake failed.' }));
+        setVdiAuthError(errorData.detail || "Invalid credentials. Connection rejected.");
+        addTerminalLog("⚠️ VDI Secure Authentication attempt failed: unauthorized credentials.");
+      }
+    } catch (err) {
+      console.error("VDI Login Error:", err);
+      setVdiAuthError("VDI Authentication Server Unreachable. Please try again later.");
+      addTerminalLog(`⚠️ VDI Secure Auth Error: ${err.message}`);
+    } finally {
+      setVdiLoading(false);
     }
-    setVdiLoading(false);
   };
   
   const handleVDILogout = () => {
