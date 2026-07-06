@@ -623,6 +623,24 @@ function App() {
       {/* Main Container */}
       <div className="max-w-7xl mx-auto px-4 py-8 relative z-10">
         
+        {/* VDI Session Info & Logout (PRJ-B0FC-0057) - Top Right Corner */}
+        <div className="absolute top-4 right-4 md:right-8 bg-slate-900/90 backdrop-blur border border-slate-800 rounded-xl px-3 py-1.5 text-xs flex items-center gap-3 shadow-lg z-20 hover:border-slate-700 transition">
+          <div className="text-right">
+            <p className="text-[9px] text-slate-500 uppercase font-extrabold tracking-wider">VDI Session</p>
+            <p className="font-mono font-bold text-indigo-400">operator1</p>
+          </div>
+          <button
+            onClick={handleVDILogout}
+            id="vdi_logout_button"
+            className="p-1.5 rounded bg-slate-800 text-slate-400 hover:text-rose-450 hover:bg-slate-750 transition"
+            title="Disconnect VDI Session"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
+        </div>
+
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-6 mb-8 gap-4">
           <div>
@@ -725,24 +743,6 @@ function App() {
                 }`}
               >
                 {networkOnline ? 'Outage' : 'Restore'}
-              </button>
-            </div>
-
-            {/* VDI Session Info & Logout (PRJ-B0FC-0057) */}
-            <div className="bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 text-xs flex items-center gap-3 shadow-inner">
-              <div className="text-right">
-                <p className="text-[9px] text-slate-500 uppercase font-extrabold tracking-wider">VDI Session</p>
-                <p className="font-mono font-bold text-indigo-400">operator1</p>
-              </div>
-              <button
-                onClick={handleVDILogout}
-                id="vdi_logout_button"
-                className="p-1 rounded bg-slate-800 text-slate-400 hover:text-rose-450 hover:bg-slate-750 transition"
-                title="Disconnect VDI Session"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
               </button>
             </div>
           </div>
