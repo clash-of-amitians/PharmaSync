@@ -29,5 +29,8 @@ class Settings:
     BACKUP_LINK_IP: str = os.getenv("BACKUP_LINK_IP", "10.0.2.20")
     DNS_RECORD_NAME: str = os.getenv("DNS_RECORD_NAME", "api.pharmasync.com")
     DNS_ZONE_NAME: str = os.getenv("DNS_ZONE_NAME", "pharmasync.com")
+    
+    # DNS Provider API Integration (AWS Route 53)
+    ROUTE53_HOSTED_ZONE_ID: str | None = os.getenv("ROUTE53_HOSTED_ZONE_ID", None)
 
 settings = Settings()

@@ -79,5 +79,34 @@ class TestDNSSimulation(unittest.TestCase):
         self.assertEqual(log_entry["old_value"], "1.1.1.1")
         self.assertEqual(log_entry["new_value"], "2.2.2.2")
 
+    @patch('app.services.dns_service.update_route53_record')
+    @patch('app.services.dns_service.get_dns_zone')
+    @patch('app.services.dns_service.save_dns_zone')
+    @patch('app.services.dns_service.save_dns_log')
+    def test_update_dns_record_with_route53(self, mock_save_log, mock_save_zone, mock_get_zone, mock_update_route53):
+        # Configure zone id in settings using patch.object
+        with patch.object(settings, 'ROUTE53_HOSTED_ZONE_ID', 'Z123456789'):
+            mock_get_zone.return_value = {
+                "zone_name": "test.com",
+                "records": [
+                    {"name": "api.test.com", "type": "A", "value": "1.1.1.1", "ttl": 10}
+                ]
+            }
+            
+            result = update_dns_record(
+                zone_name="test.com",
+                record_name="api.test.com",
+                new_value="3.3.3.3"
+            )
+            
+            self.assertEqual(result["status"], "SUCCESS")
+            mock_update_route53.assert_called_once_with(
+                zone_id='Z123456789',
+                record_name='api.test.com',
+                new_value='3.3.3.3',
+                record_type='A',
+                ttl=10
+            )
+
 if __name__ == "__main__":
     unittest.main()
