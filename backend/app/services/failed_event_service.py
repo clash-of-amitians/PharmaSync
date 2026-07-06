@@ -7,6 +7,9 @@ from app.database.dynamodb import (
     delete_failed_event
 )
 
+import time
+from app.core.metrics import ORDER_EVENTS_PROCESSED, ORDER_EVENTS_LATENCY
+
 # Simulated network/outage status
 NETWORK_ONLINE = True
 
@@ -28,14 +31,30 @@ def process_order_event(event_id: str, event_type: str, payload: dict) -> bool:
     Simulates processing of an order event.
     Throws Exception if network is offline or if payload explicitly requests simulation failure.
     """
-    if not NETWORK_ONLINE:
-        raise Exception("Downstream API connection failure (network offline)")
+    start_time = time.perf_counter()
+    status = "SUCCESS"
+    try:
+        if not NETWORK_ONLINE:
+            status = "FAILURE"
+            raise Exception("Downstream API connection failure (network offline)")
+            
+        if payload.get("simulate_failure") is True:
+            status = "FAILURE"
+            raise Exception("Simulated transaction processing failure")
+            
+        # Simulate small real-world processing latency (20ms - 80ms)
+        import random
+        time.sleep(random.uniform(0.02, 0.08))
         
-    if payload.get("simulate_failure") is True:
-        raise Exception("Simulated transaction processing failure")
-        
-    print(f"Successfully processed event {event_id} of type {event_type}!")
-    return True
+        print(f"Successfully processed event {event_id} of type {event_type}!")
+        return True
+    except Exception as e:
+        status = "FAILURE"
+        raise e
+    finally:
+        latency = time.perf_counter() - start_time
+        ORDER_EVENTS_PROCESSED.labels(event_type=event_type, status=status).inc()
+        ORDER_EVENTS_LATENCY.labels(event_type=event_type).observe(latency)
 
 def log_failed_event(event_id: str, event_type: str, failure_reason: str, event_payload: dict):
     """

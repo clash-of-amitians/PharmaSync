@@ -20,3 +20,17 @@ PIPELINE_DURATION = Histogram(
     "Duration of CI/CD pipeline steps in seconds",
     ["pipeline_id", "step"]
 )
+
+# Order Event Telemetry
+ORDER_EVENTS_PROCESSED = Counter(
+    "order_events_processed_total",
+    "Total number of order events processed",
+    ["event_type", "status"]
+)
+
+ORDER_EVENTS_LATENCY = Histogram(
+    "order_events_processing_duration_seconds",
+    "Time taken to process order events in seconds",
+    ["event_type"]
+)
+
