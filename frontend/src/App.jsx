@@ -35,7 +35,7 @@ const parsePrometheusMetrics = (text) => {
 
 function App() {
   // Navigation
-  const [activeView, setActiveView] = useState('events'); // 'events' | 'dns' | 'cicd'
+  const [activeView, setActiveView] = useState('events'); // 'events' | 'dns' | 'cicd' | 'order_metrics'
   
   // Authorization State (AC3)
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -68,6 +68,9 @@ function App() {
   // CI/CD Telemetry State
   const [parsedMetrics, setParsedMetrics] = useState(null);
   const [metricsHistory, setMetricsHistory] = useState([]);
+  
+  // Order Events Telemetry State
+  const [orderMetricsHistory, setOrderMetricsHistory] = useState([]);
 
   // Transaction form state
   const [formEventId, setFormEventId] = useState('');
@@ -145,7 +148,7 @@ function App() {
         const parsed = parsePrometheusMetrics(metricsText);
         setParsedMetrics(parsed);
 
-        // Sum download & upload totals
+        // A. Sum download & upload totals for CI/CD Dashboard
         const downloadTotal = calculateTotalBandwidth(parsed, 'download');
         const uploadTotal = calculateTotalBandwidth(parsed, 'upload');
 
@@ -156,7 +159,6 @@ function App() {
           let ulSpeed = 0;
 
           if (lastEntry) {
-            // Speed = difference divided by elapsed check period (3s)
             const dlDiff = downloadTotal - lastEntry.downloadTotal;
             const ulDiff = uploadTotal - lastEntry.uploadTotal;
             dlSpeed = dlDiff > 0 ? dlDiff / 3 : 0;
@@ -164,6 +166,24 @@ function App() {
           }
 
           return [...prev, { time: now, downloadTotal, uploadTotal, dlSpeed, ulSpeed }].slice(-20);
+        });
+
+        // B. Parse Order Latency and throughput rate for Order Event Metrics Dashboard
+        const successCount = calculateOrderMetric(parsed, 'SUCCESS');
+        const failureCount = calculateOrderMetric(parsed, 'FAILURE');
+        const totalCount = successCount + failureCount;
+        const failureRate = totalCount > 0 ? (failureCount / totalCount) * 100 : 0;
+        
+        let avgLatency = 0;
+        if (parsed['order_events_processing_duration_seconds_sum'] && parsed['order_events_processing_duration_seconds_count']) {
+          const latencySum = parsed['order_events_processing_duration_seconds_sum'].reduce((sum, m) => sum + m.value, 0);
+          const latencyCount = parsed['order_events_processing_duration_seconds_count'].reduce((sum, m) => sum + m.value, 0);
+          avgLatency = latencyCount > 0 ? (latencySum / latencyCount) * 1000 : 0; // Convert to ms
+        }
+
+        setOrderMetricsHistory(prev => {
+          const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          return [...prev, { time: now, successCount, failureCount, totalCount, failureRate, avgLatency }].slice(-20);
         });
       }
     } catch (err) {
@@ -178,7 +198,7 @@ function App() {
     return () => clearInterval(interval);
   }, [networkOnline]);
 
-  // Auth Handler (AC3)
+  // Auth Handler
   const handleAuthSubmit = (e) => {
     e.preventDefault();
     if (authToken === 'admin123') {
@@ -351,7 +371,15 @@ function App() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  // SVG Chart rendering computations
+  // Order Events Telemetry Helpers
+  const calculateOrderMetric = (metrics, status) => {
+    if (!metrics || !metrics['order_events_processed_total']) return 0;
+    return metrics['order_events_processed_total']
+      .filter(m => m.labels.status === status)
+      .reduce((sum, m) => sum + m.value, 0);
+  };
+
+  // SVG Chart rendering computations for CI/CD
   const renderSVGChartPaths = () => {
     if (metricsHistory.length < 2) return null;
     
@@ -377,6 +405,29 @@ function App() {
   };
 
   const chartPaths = renderSVGChartPaths();
+
+  // SVG Chart rendering computations for Order Latency
+  const renderSVGOrderChartPaths = () => {
+    if (orderMetricsHistory.length < 2) return null;
+    const maxLatency = Math.max(...orderMetricsHistory.map(d => Math.max(d.avgLatency, 100))); // Min scale 100ms
+    const w = 600;
+    const h = 200;
+    
+    const coords = orderMetricsHistory.map((d, index) => {
+      const x = (index / (orderMetricsHistory.length - 1)) * w;
+      const y = h - (d.avgLatency / maxLatency) * (h - 20) - 10;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    
+    return { path: `M ${coords.join(' L ')}`, maxLatency };
+  };
+
+  const getFailureRate = () => {
+    const success = calculateOrderMetric(parsedMetrics, 'SUCCESS');
+    const failure = calculateOrderMetric(parsedMetrics, 'FAILURE');
+    const total = success + failure;
+    return total > 0 ? (failure / total) * 100 : 0;
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white relative overflow-hidden">
@@ -442,6 +493,16 @@ function App() {
               >
                 CI/CD Dashboard
               </button>
+              <button
+                onClick={() => setActiveView('order_metrics')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeView === 'order_metrics'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Order Metrics
+              </button>
             </div>
 
             {/* Connection Toggle Panel */}
@@ -452,7 +513,7 @@ function App() {
                   <span className={`relative inline-flex rounded-full h-3.5 w-3.5 ${networkOnline ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
                 </span>
                 <div className="text-right">
-                  <p className="text-[10px] text-slate-505 uppercase tracking-wider font-semibold">Connection</p>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Connection</p>
                   <p className={`text-xs font-bold ${networkOnline ? 'text-emerald-400' : 'text-rose-400'}`}>
                     {networkOnline ? 'ONLINE' : 'OFFLINE'}
                   </p>
@@ -631,7 +692,7 @@ function App() {
                       className={`px-4 py-2 rounded-xl text-sm font-semibold transition duration-150 ${
                         activeTab === 'failed'
                           ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                          : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
                       Failed Queue ({failedEvents.length})
@@ -641,7 +702,7 @@ function App() {
                       className={`px-4 py-2 rounded-xl text-sm font-semibold transition duration-150 ${
                         activeTab === 'completed'
                           ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                          : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
                       Processed History ({completedEvents.length})
@@ -651,14 +712,14 @@ function App() {
                       className={`px-4 py-2 rounded-xl text-sm font-semibold transition duration-150 ${
                         activeTab === 'logs'
                           ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                          : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
                       Terminal Logs
                     </button>
                   </div>
 
-                  <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                  <div className="text-xs text-slate-505 flex items-center gap-1.5">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
@@ -755,7 +816,7 @@ function App() {
                   </div>
                 )}
 
-                {/* Tab Content - Completed History */}
+                {/* Tab Content - Processed History */}
                 {activeTab === 'completed' && (
                   <div className="flex-grow flex flex-col justify-start">
                     {completedEvents.length === 0 ? (
@@ -955,13 +1016,13 @@ function App() {
                 <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
                 
                 <div>
-                  <h3 className="text-xs text-slate-505 font-bold uppercase tracking-wider mb-2">Target Hostname</h3>
+                  <h3 className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Target Hostname</h3>
                   <p className="text-2xl font-black text-white font-mono tracking-tight">api.pharmasync.com</p>
                   <p className="text-xs text-slate-400 mt-1">Zone: <span className="text-indigo-400 font-bold">pharmasync.com</span></p>
                 </div>
 
                 <div className="flex flex-col justify-center items-start md:items-end">
-                  <h3 className="text-xs text-slate-505 font-bold uppercase tracking-wider mb-1.5 md:text-right">Resolved IP Address</h3>
+                  <h3 className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1.5 md:text-right">Resolved IP Address</h3>
                   <div className="flex items-center gap-3">
                     <span className="relative flex h-3.5 w-3.5">
                       <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${getActiveDNSIP() === '10.0.1.10' ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
@@ -981,7 +1042,7 @@ function App() {
               <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl flex-grow min-h-[300px] flex flex-col">
                 <h2 className="text-lg font-bold text-white mb-4 border-b border-slate-800 pb-3 flex justify-between items-center">
                   <span>DNS Log Auditing</span>
-                  <span className="text-xs text-slate-500 flex items-center gap-1">
+                  <span className="text-xs text-slate-505 flex items-center gap-1">
                     <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
                     Audit trail live
                   </span>
@@ -999,7 +1060,7 @@ function App() {
                   ) : (
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="border-b border-slate-800 text-[10px] text-slate-505 uppercase tracking-wider font-bold">
+                        <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
                           <th className="py-2.5 px-3">Timestamp</th>
                           <th className="py-2.5 px-3">Action</th>
                           <th className="py-2.5 px-3">Record</th>
@@ -1026,7 +1087,7 @@ function App() {
                             <td className="py-2.5 px-3 font-mono text-slate-300">
                               {log.record_name}
                             </td>
-                            <td className="py-2.5 px-3 font-mono text-slate-500">
+                            <td className="py-2.5 px-3 font-mono text-slate-550">
                               {log.old_value}
                             </td>
                             <td className={`py-2.5 px-3 font-mono font-bold ${log.new_value === '10.0.1.10' ? 'text-emerald-400' : 'text-amber-400'}`}>
@@ -1182,7 +1243,7 @@ function App() {
                     
                     <div className="bg-slate-950 rounded-xl p-4 flex-grow flex items-center justify-center min-h-[220px]">
                       {metricsHistory.length < 2 ? (
-                        <p className="text-xs text-slate-500 italic">Collecting throughput history samples...</p>
+                        <p className="text-xs text-slate-505 italic">Collecting throughput history samples...</p>
                       ) : (
                         <div className="w-full flex flex-col gap-3">
                           <svg className="w-full h-[200px]" viewBox="0 0 600 200">
@@ -1220,17 +1281,17 @@ function App() {
                   {/* Breakdown Table Panel */}
                   <div className="lg:col-span-5 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
                     <h3 className="text-sm font-bold text-white mb-1">Pipeline Steps Breakdown</h3>
-                    <p className="text-[10px] text-slate-500 mb-4 uppercase tracking-wider font-semibold">
+                    <p className="text-[10px] text-slate-505 mb-4 uppercase tracking-wider font-semibold">
                       Telemetry values parsed directly from /metrics
                     </p>
 
                     <div className="flex-grow overflow-y-auto max-h-[250px] pr-1">
                       {!parsedMetrics || !parsedMetrics['cicd_pipeline_bandwidth_bytes_total'] ? (
-                        <p className="text-xs text-slate-500 italic">No telemetry data parsed.</p>
+                        <p className="text-xs text-slate-505 italic">No telemetry data parsed.</p>
                       ) : (
                         <table className="w-full text-left text-xs border-collapse">
                           <thead>
-                            <tr className="border-b border-slate-850 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
+                            <tr className="border-b border-slate-850 text-[10px] text-slate-550 uppercase tracking-wider font-bold">
                               <th className="py-2 px-1">Pipeline ID</th>
                               <th className="py-2 px-1">Step</th>
                               <th className="py-2 px-1">Direction</th>
@@ -1269,6 +1330,183 @@ function App() {
 
               </div>
             )}
+
+          </div>
+        )}
+
+        {/* VIEW 4: ORDER EVENT METRICS DASHBOARD */}
+        {activeView === 'order_metrics' && (
+          <div className="flex flex-col gap-8">
+            
+            {/* Stat Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-emerald-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Throughput</p>
+                <p className="text-3xl font-black text-emerald-400 mt-2 font-mono">
+                  {calculateOrderMetric(parsedMetrics, 'SUCCESS') + calculateOrderMetric(parsedMetrics, 'FAILURE')}
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Processed events (Success + Fail)</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-rose-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Failures</p>
+                <p className="text-3xl font-black text-rose-400 mt-2 font-mono">
+                  {calculateOrderMetric(parsedMetrics, 'FAILURE')}
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Logged event pipeline failures</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-amber-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 3.055A9.003 9.003 0 1020.945 13H11V3.055z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Failure Rate (%)</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <p className={`text-3xl font-black font-mono ${
+                    getFailureRate() > 20
+                      ? 'text-rose-500 animate-pulse font-bold'
+                      : 'text-amber-400'
+                  }`}>
+                    {getFailureRate().toFixed(1)}%
+                  </p>
+                  {getFailureRate() > 20 && (
+                    <span className="px-1.5 py-0.5 rounded text-[8px] bg-rose-500 text-white font-bold tracking-wider animate-bounce">
+                      ALARM
+                    </span>
+                  )}
+                </div>
+                <p className="text-[9px] text-slate-400 mt-1">SLA Alert Threshold: 20%</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-blue-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Avg Processing Latency</p>
+                <p className="text-3xl font-black text-blue-400 mt-2 font-mono">
+                  {orderMetricsHistory.length > 0 ? orderMetricsHistory[orderMetricsHistory.length - 1].avgLatency.toFixed(0) : '0'} ms
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Simulated processing jitter</p>
+              </div>
+
+            </div>
+
+            {/* SLA Alert banner */}
+            {getFailureRate() > 20 && (
+              <div className="bg-rose-950/40 border border-rose-900/60 rounded-2xl p-5 flex items-center gap-4 animate-pulse shadow-lg shadow-rose-950/20">
+                <div className="p-3 rounded-xl bg-rose-500 text-white font-bold text-sm tracking-wide">
+                  ALARM
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-rose-300">High Event Processing Failure Rate Warning</h4>
+                  <p className="text-xs text-rose-400 mt-1">
+                    System failure rate is at {getFailureRate().toFixed(1)}%, exceeding the SLA limit of 20%. Please investigate downstream connectivity or replay failed logs.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Graphs & Details Table */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              
+              {/* Latency Timeseries graph */}
+              <div className="lg:col-span-7 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                <h3 className="text-sm font-bold text-white mb-1">Latency Trend Analytics</h3>
+                <p className="text-[10px] text-slate-500 mb-4 uppercase tracking-wider font-semibold">
+                  Real-time average duration in milliseconds
+                </p>
+
+                <div className="bg-slate-950 rounded-xl p-4 flex-grow flex items-center justify-center min-h-[220px]">
+                  {orderMetricsHistory.length < 2 ? (
+                    <p className="text-xs text-slate-505 italic">Awaiting telemetry samples (submit events to populate chart)...</p>
+                  ) : (
+                    <div className="w-full flex flex-col gap-3">
+                      <svg className="w-full h-[200px]" viewBox="0 0 600 200">
+                        {/* Grid lines */}
+                        <line x1="0" y1="50" x2="600" y2="50" stroke="#1e293b" strokeDasharray="3,3" />
+                        <line x1="0" y1="100" x2="600" y2="100" stroke="#1e293b" strokeDasharray="3,3" />
+                        <line x1="0" y1="150" x2="600" y2="150" stroke="#1e293b" strokeDasharray="3,3" />
+
+                        {/* Latency line path */}
+                        <path d={renderSVGOrderChartPaths().path} fill="none" stroke="#60a5fa" strokeWidth="2.5" strokeLinecap="round" />
+                      </svg>
+
+                      {/* Legend */}
+                      <div className="flex justify-between items-center text-[10px] text-slate-450 px-1 font-mono">
+                        <span className="flex items-center gap-1.5">
+                          <span className="inline-block w-2.5 h-1.5 rounded-full bg-blue-400"></span>
+                          Avg Latency: {orderMetricsHistory[orderMetricsHistory.length - 1].avgLatency.toFixed(1)} ms
+                        </span>
+                        <span>Max scale: {renderSVGOrderChartPaths().maxLatency.toFixed(0)} ms</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Event Type Breakdown Table */}
+              <div className="lg:col-span-5 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                <h3 className="text-sm font-bold text-white mb-1">Process Event Type Telemetry</h3>
+                <p className="text-[10px] text-slate-500 mb-4 uppercase tracking-wider font-semibold">
+                  Breakdown by event names and transaction state
+                </p>
+
+                <div className="flex-grow overflow-y-auto max-h-[250px] pr-1">
+                  {!parsedMetrics || !parsedMetrics['order_events_processed_total'] ? (
+                    <p className="text-xs text-slate-550 italic">Submit events via the Event dispatcher to populate telemetry metrics.</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-850 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
+                          <th className="py-2 px-1">Event Type</th>
+                          <th className="py-2 px-1">Status</th>
+                          <th className="py-2 px-1 text-right">Transactions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsedMetrics['order_events_processed_total']
+                          .filter(m => m.value > 0)
+                          .sort((a, b) => b.value - a.value)
+                          .map((m, idx) => (
+                            <tr key={idx} className="border-b border-slate-850/40 hover:bg-slate-900/10 transition">
+                              <td className="py-2 px-1 font-bold text-slate-300">{m.labels.event_type}</td>
+                              <td className="py-2 px-1 uppercase text-[10px]">
+                                <span className={`px-1.5 py-0.5 rounded font-bold ${
+                                  m.labels.status === 'SUCCESS' 
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/15'
+                                    : 'bg-rose-500/10 text-rose-400 border border-rose-500/15'
+                                }`}>
+                                  {m.labels.status}
+                                </span>
+                              </td>
+                              <td className="py-2 px-1 text-right font-mono text-slate-200 font-semibold">
+                                {m.value}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
+            </div>
 
           </div>
         )}
