@@ -43,6 +43,9 @@ function App() {
   });
   const [authToken, setAuthToken] = useState('');
   const [authError, setAuthError] = useState('');
+  const [userRole, setUserRole] = useState(() => {
+    return localStorage.getItem('cicd_role') || null;
+  });
 
   // Connection state
   const [networkOnline, setNetworkOnline] = useState(true);
@@ -175,14 +178,23 @@ function App() {
     return () => clearInterval(interval);
   }, [networkOnline]);
 
-  // Auth Handler
+  // Auth Handler (AC3)
   const handleAuthSubmit = (e) => {
     e.preventDefault();
     if (authToken === 'admin123') {
       setIsAuthenticated(true);
+      setUserRole('Administrator');
       setAuthError('');
       localStorage.setItem('cicd_auth', 'true');
-      addTerminalLog("🔐 CI/CD Telemetry View unlocked successfully.");
+      localStorage.setItem('cicd_role', 'Administrator');
+      addTerminalLog("🔐 CI/CD Telemetry View: Unlocked as Administrator (Read/Write).");
+    } else if (authToken === 'viewer123') {
+      setIsAuthenticated(true);
+      setUserRole('Viewer');
+      setAuthError('');
+      localStorage.setItem('cicd_auth', 'true');
+      localStorage.setItem('cicd_role', 'Viewer');
+      addTerminalLog("🔐 CI/CD Telemetry View: Unlocked as Viewer (Read-Only).");
     } else {
       setAuthError('Invalid Access Token. Please try again.');
     }
@@ -190,7 +202,9 @@ function App() {
 
   const handleLogout = () => {
     setIsAuthenticated(false);
+    setUserRole(null);
     localStorage.removeItem('cicd_auth');
+    localStorage.removeItem('cicd_role');
     addTerminalLog("🔐 CI/CD Telemetry View locked.");
   };
 
@@ -1076,8 +1090,14 @@ function App() {
                     </button>
                   </form>
                   
-                  <div className="mt-6 pt-6 border-t border-slate-850/80 text-[10px] text-slate-500">
-                    💡 Hint for Mentor Review: use token <span className="font-mono font-bold text-indigo-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">admin123</span>
+                  <div className="mt-6 pt-6 border-t border-slate-850/80 text-[10px] text-slate-500 flex flex-col gap-1.5 items-center">
+                    <span>💡 Hint for Reviewer (RBAC Permissions):</span>
+                    <span className="text-[9px]">
+                      Administrator: Token <span className="font-mono font-bold text-indigo-400 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">admin123</span>
+                    </span>
+                    <span className="text-[9px]">
+                      Read-Only Viewer: Token <span className="font-mono font-bold text-indigo-400 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">viewer123</span>
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1136,7 +1156,9 @@ function App() {
                   <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 shadow-md flex flex-col justify-between">
                     <div>
                       <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Telemetry Controls</p>
-                      <p className="text-xs text-slate-400 mt-1">Authorized as Administrator</p>
+                      <p className={`text-xs mt-1 font-semibold ${userRole === 'Administrator' ? 'text-emerald-450' : 'text-amber-450'}`}>
+                        Role: {userRole || 'Loading...'}
+                      </p>
                     </div>
                     <button
                       onClick={handleLogout}
