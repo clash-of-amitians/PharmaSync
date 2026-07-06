@@ -20,11 +20,11 @@ class TestBandwidthRouter(unittest.TestCase):
             self.assertIn("accruedCost", lnk)
             
     def test_filter_by_region(self):
-        data = get_bandwidth_links(region="us-east")
+        data = get_bandwidth_links(region="IN-West")
         self.assertIn("links", data)
         self.assertEqual(len(data["links"]), 2)
         for lnk in data["links"]:
-            self.assertEqual(lnk["region"], "us-east")
+            self.assertEqual(lnk["region"], "IN-West")
             
     def test_filter_by_type(self):
         data = get_bandwidth_links(link_type="VPN")

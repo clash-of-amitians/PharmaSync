@@ -4,15 +4,16 @@ from fastapi import APIRouter, Query
 
 router = APIRouter(prefix="/bandwidth", tags=["bandwidth"])
 
-# Initial state for network links
+# Initial state for network links (Indian Regions & Rupee rates)
 links_db = [
-    { "id": "lnk-us-east-1", "name": "US East DC 1", "region": "us-east", "type": "DirectConnect", "speed": 850.0, "rate": 0.02, "totalData": 1250.0, "accruedCost": 25.00 },
-    { "id": "lnk-us-east-2", "name": "US East VPN", "region": "us-east", "type": "VPN", "speed": 120.0, "rate": 0.08, "totalData": 310.0, "accruedCost": 24.80 },
-    { "id": "lnk-us-west-1", "name": "US West DC 2", "region": "us-west", "type": "DirectConnect", "speed": 640.0, "rate": 0.03, "totalData": 940.0, "accruedCost": 28.20 },
-    { "id": "lnk-eu-west-1", "name": "EU West VPN", "region": "eu-west", "type": "VPN", "speed": 110.0, "rate": 0.09, "totalData": 410.0, "accruedCost": 36.90 },
-    { "id": "lnk-eu-west-2", "name": "EU West Satellite", "region": "eu-west", "type": "Satellite", "speed": 45.0, "rate": 0.25, "totalData": 85.0, "accruedCost": 21.25 },
-    { "id": "lnk-ap-south-1", "name": "AP South Broadband", "region": "ap-south", "type": "Broadband", "speed": 300.0, "rate": 0.05, "totalData": 600.0, "accruedCost": 30.00 }
+    { "id": "lnk-in-west-1", "name": "Mumbai DC 1", "region": "IN-West", "type": "DirectConnect", "speed": 850.0, "rate": 1.50, "totalData": 1250.0, "accruedCost": 1875.00 },
+    { "id": "lnk-in-west-2", "name": "Mumbai VPN", "region": "IN-West", "type": "VPN", "speed": 120.0, "rate": 6.00, "totalData": 310.0, "accruedCost": 1860.00 },
+    { "id": "lnk-in-south-1", "name": "Bengaluru DC 2", "region": "IN-South", "type": "DirectConnect", "speed": 640.0, "rate": 2.20, "totalData": 940.0, "accruedCost": 2068.00 },
+    { "id": "lnk-in-north-1", "name": "Delhi VPN", "region": "IN-North", "type": "VPN", "speed": 110.0, "rate": 7.50, "totalData": 410.0, "accruedCost": 3075.00 },
+    { "id": "lnk-in-north-2", "name": "Delhi Satellite", "region": "IN-North", "type": "Satellite", "speed": 45.0, "rate": 18.00, "totalData": 85.0, "accruedCost": 1530.00 },
+    { "id": "lnk-in-east-1", "name": "Kolkata Broadband", "region": "IN-East", "type": "Broadband", "speed": 300.0, "rate": 4.00, "totalData": 600.0, "accruedCost": 2400.00 }
 ]
+
 
 last_update_time = time.time()
 

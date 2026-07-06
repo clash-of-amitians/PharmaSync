@@ -1580,10 +1580,10 @@ function App() {
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                   >
                     <option value="All">All Regions</option>
-                    <option value="us-east">US East</option>
-                    <option value="us-west">US West</option>
-                    <option value="eu-west">EU West</option>
-                    <option value="ap-south">AP South</option>
+                    <option value="IN-North">IN-North (Delhi)</option>
+                    <option value="IN-West">IN-West (Mumbai)</option>
+                    <option value="IN-South">IN-South (Bengaluru)</option>
+                    <option value="IN-East">IN-East (Kolkata)</option>
                   </select>
                 </div>
 
@@ -1628,7 +1628,7 @@ function App() {
                 </div>
                 <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Accumulative Cost</p>
                 <p className="text-3xl font-black text-indigo-400 mt-2 font-mono">
-                  ${totalFilteredCost.toFixed(2)}
+                  ₹{totalFilteredCost.toFixed(2)}
                 </p>
                 <p className="text-[9px] text-slate-400 mt-1">Billed rate * volume consumed</p>
               </div>
@@ -1639,9 +1639,9 @@ function App() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" />
                   </svg>
                 </div>
-                <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Average Cost Rate</p>
+                <p className="text-[10px] text-slate-555 uppercase font-extrabold tracking-wider">Average Cost Rate</p>
                 <p className="text-3xl font-black text-violet-400 mt-2 font-mono">
-                  ${averageFilteredRate.toFixed(3)} <span className="text-sm font-semibold">/ GB</span>
+                  ₹{averageFilteredRate.toFixed(2)} <span className="text-sm font-semibold">/ GB</span>
                 </p>
                 <p className="text-[9px] text-slate-400 mt-1">Weighted average efficiency</p>
               </div>
@@ -1652,7 +1652,7 @@ function App() {
                   {optimalLink ? (
                     <div className="mt-2">
                       <p className="text-xs font-bold text-emerald-400 font-mono">{optimalLink.name}</p>
-                      <p className="text-[9px] text-slate-400">Lowest cost rate: <span className="text-emerald-500 font-semibold">${optimalLink.rate.toFixed(2)}/GB</span></p>
+                      <p className="text-[9px] text-slate-400">Lowest cost rate: <span className="text-emerald-500 font-semibold">₹{optimalLink.rate.toFixed(2)}/GB</span></p>
                     </div>
                   ) : (
                     <p className="text-xs text-slate-500 mt-2 italic">No link matches filters</p>
@@ -1686,7 +1686,7 @@ function App() {
                         <div key={lnk.id} className="flex flex-col gap-1 mb-4 last:mb-0">
                           <div className="flex justify-between text-xs font-mono">
                             <span className="text-slate-300 font-bold">{lnk.name} ({lnk.type})</span>
-                            <span className="font-extrabold text-indigo-400">${lnk.accruedCost.toFixed(2)}</span>
+                            <span className="font-extrabold text-indigo-400">₹{lnk.accruedCost.toFixed(2)}</span>
                           </div>
                           <div className="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-850/50 shadow-inner">
                             <div 
@@ -1718,8 +1718,8 @@ function App() {
                           <th className="py-2.5 px-1">Link Name</th>
                           <th className="py-2.5 px-1">Region</th>
                           <th className="py-2.5 px-1">Speed</th>
-                          <th className="py-2.5 px-1 text-right">Cost/GB</th>
-                          <th className="py-2.5 px-1 text-right">Accrued Cost</th>
+                          <th className="py-2.5 px-1 text-right">Cost/GB (₹)</th>
+                          <th className="py-2.5 px-1 text-right">Accrued Cost (₹)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1732,8 +1732,8 @@ function App() {
                               </span>
                             </td>
                             <td className="py-2.5 px-1 font-mono text-indigo-400 font-semibold">{lnk.speed} Mbps</td>
-                            <td className="py-2.5 px-1 text-right font-mono text-slate-300">${lnk.rate.toFixed(2)}</td>
-                            <td className="py-2.5 px-1 text-right font-mono text-emerald-400 font-black">${lnk.accruedCost.toFixed(2)}</td>
+                            <td className="py-2.5 px-1 text-right font-mono text-slate-300">₹{lnk.rate.toFixed(2)}</td>
+                            <td className="py-2.5 px-1 text-right font-mono text-emerald-400 font-black">₹{lnk.accruedCost.toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
