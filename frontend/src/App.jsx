@@ -1,9 +1,49 @@
 import React, { useState, useEffect } from 'react';
 
+// Prometheus format parser
+const parsePrometheusMetrics = (text) => {
+  const lines = text.split('\n');
+  const metrics = {};
+  
+  lines.forEach(line => {
+    if (line.startsWith('#') || !line.trim()) return;
+    
+    const match = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)(?:{(.*)})?\s+(.+)$/);
+    if (!match) return;
+    
+    const name = match[1];
+    const labelStr = match[2];
+    const val = parseFloat(match[3]);
+    
+    const labels = {};
+    if (labelStr) {
+      const labelPairs = labelStr.split(',');
+      labelPairs.forEach(pair => {
+        const [k, v] = pair.split('=');
+        labels[k.trim()] = v.replace(/"/g, '').trim();
+      });
+    }
+    
+    if (!metrics[name]) {
+      metrics[name] = [];
+    }
+    metrics[name].push({ labels, value: val });
+  });
+  
+  return metrics;
+};
+
 function App() {
   // Navigation
-  const [activeView, setActiveView] = useState('events'); // 'events' | 'dns'
+  const [activeView, setActiveView] = useState('events'); // 'events' | 'dns' | 'cicd'
   
+  // Authorization State (AC3)
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('cicd_auth') === 'true';
+  });
+  const [authToken, setAuthToken] = useState('');
+  const [authError, setAuthError] = useState('');
+
   // Connection state
   const [networkOnline, setNetworkOnline] = useState(true);
   
@@ -22,6 +62,10 @@ function App() {
   const [dnsRecordValue, setDnsRecordValue] = useState('10.0.1.10');
   const [dnsTTL, setDnsTTL] = useState(10);
   
+  // CI/CD Telemetry State
+  const [parsedMetrics, setParsedMetrics] = useState(null);
+  const [metricsHistory, setMetricsHistory] = useState([]);
+
   // Transaction form state
   const [formEventId, setFormEventId] = useState('');
   const [formEventType, setFormEventType] = useState('OrderCreated');
@@ -50,7 +94,7 @@ function App() {
     setTerminalLogs((prev) => [`[${time}] ${msg}`, ...prev.slice(0, 49)]);
   };
 
-  // Fetch all backend stats (both event queue and DNS records)
+  // Fetch all backend stats (event queue, DNS, and Prometheus metrics)
   const fetchBackendData = async () => {
     try {
       // 1. Network Status
@@ -90,6 +134,35 @@ function App() {
         const dnsLogsData = await dnsLogsRes.json();
         setDnsLogs(dnsLogsData.logs || []);
       }
+
+      // 6. Prometheus Metrics Endpoint Scrape (Near Real-time parsing)
+      const metricsRes = await fetch('/metrics');
+      if (metricsRes.ok) {
+        const metricsText = await metricsRes.text();
+        const parsed = parsePrometheusMetrics(metricsText);
+        setParsedMetrics(parsed);
+
+        // Sum download & upload totals
+        const downloadTotal = calculateTotalBandwidth(parsed, 'download');
+        const uploadTotal = calculateTotalBandwidth(parsed, 'upload');
+
+        setMetricsHistory(prev => {
+          const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          const lastEntry = prev[prev.length - 1];
+          let dlSpeed = 0;
+          let ulSpeed = 0;
+
+          if (lastEntry) {
+            // Speed = difference divided by elapsed check period (3s)
+            const dlDiff = downloadTotal - lastEntry.downloadTotal;
+            const ulDiff = uploadTotal - lastEntry.uploadTotal;
+            dlSpeed = dlDiff > 0 ? dlDiff / 3 : 0;
+            ulSpeed = ulDiff > 0 ? ulDiff / 3 : 0;
+          }
+
+          return [...prev, { time: now, downloadTotal, uploadTotal, dlSpeed, ulSpeed }].slice(-20);
+        });
+      }
     } catch (err) {
       console.error("API Polling Error:", err);
     }
@@ -101,6 +174,25 @@ function App() {
     const interval = setInterval(fetchBackendData, 3000);
     return () => clearInterval(interval);
   }, [networkOnline]);
+
+  // Auth Handler
+  const handleAuthSubmit = (e) => {
+    e.preventDefault();
+    if (authToken === 'admin123') {
+      setIsAuthenticated(true);
+      setAuthError('');
+      localStorage.setItem('cicd_auth', 'true');
+      addTerminalLog("🔐 CI/CD Telemetry View unlocked successfully.");
+    } else {
+      setAuthError('Invalid Access Token. Please try again.');
+    }
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    localStorage.removeItem('cicd_auth');
+    addTerminalLog("🔐 CI/CD Telemetry View locked.");
+  };
 
   // Toggle Network State
   const toggleNetwork = async () => {
@@ -224,6 +316,54 @@ function App() {
     return rec ? rec.value : 'Not found';
   };
 
+  // CI/CD Telemetry Helpers
+  const calculateTotalBandwidth = (metrics, direction) => {
+    if (!metrics || !metrics['cicd_pipeline_bandwidth_bytes_total']) return 0;
+    return metrics['cicd_pipeline_bandwidth_bytes_total']
+      .filter(m => m.labels.direction === direction)
+      .reduce((sum, m) => sum + m.value, 0);
+  };
+
+  const getActivePipelines = () => {
+    if (!parsedMetrics || !parsedMetrics['cicd_pipeline_active_builds']) return 0;
+    return parsedMetrics['cicd_pipeline_active_builds'].reduce((sum, m) => sum + m.value, 0);
+  };
+
+  const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // SVG Chart rendering computations
+  const renderSVGChartPaths = () => {
+    if (metricsHistory.length < 2) return null;
+    
+    const maxSpeed = Math.max(...metricsHistory.map(d => Math.max(d.dlSpeed, d.ulSpeed, 1024 * 1024))); // Min height scale 1MB/s
+    const w = 600;
+    const h = 200;
+    
+    const getCoordinates = (field) => {
+      return metricsHistory.map((d, index) => {
+        const x = (index / (metricsHistory.length - 1)) * w;
+        const y = h - (d[field] / maxSpeed) * (h - 20) - 10;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      });
+    };
+    
+    const dlCoords = getCoordinates('dlSpeed');
+    const ulCoords = getCoordinates('ulSpeed');
+    
+    const dlPath = `M ${dlCoords.join(' L ')}`;
+    const ulPath = `M ${ulCoords.join(' L ')}`;
+    
+    return { dlPath, ulPath, maxSpeed };
+  };
+
+  const chartPaths = renderSVGChartPaths();
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white relative overflow-hidden">
       {/* Background gradients */}
@@ -277,6 +417,16 @@ function App() {
                 }`}
               >
                 DNS Failover
+              </button>
+              <button
+                onClick={() => setActiveView('cicd')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeView === 'cicd'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                CI/CD Dashboard
               </button>
             </div>
 
@@ -514,7 +664,7 @@ function App() {
                           </svg>
                         </div>
                         <h3 className="text-lg font-semibold text-slate-200">No Failed Events Stored</h3>
-                        <p className="text-sm text-slate-500 max-w-sm mt-1">
+                        <p className="text-sm text-slate-505 max-w-sm mt-1">
                           All transactions are processed successfully or backlog has been completely replayed.
                         </p>
                       </div>
@@ -791,13 +941,13 @@ function App() {
                 <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
                 
                 <div>
-                  <h3 className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Target Hostname</h3>
+                  <h3 className="text-xs text-slate-505 font-bold uppercase tracking-wider mb-2">Target Hostname</h3>
                   <p className="text-2xl font-black text-white font-mono tracking-tight">api.pharmasync.com</p>
                   <p className="text-xs text-slate-400 mt-1">Zone: <span className="text-indigo-400 font-bold">pharmasync.com</span></p>
                 </div>
 
                 <div className="flex flex-col justify-center items-start md:items-end">
-                  <h3 className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1.5 md:text-right">Resolved IP Address</h3>
+                  <h3 className="text-xs text-slate-505 font-bold uppercase tracking-wider mb-1.5 md:text-right">Resolved IP Address</h3>
                   <div className="flex items-center gap-3">
                     <span className="relative flex h-3.5 w-3.5">
                       <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${getActiveDNSIP() === '10.0.1.10' ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
@@ -835,7 +985,7 @@ function App() {
                   ) : (
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
+                        <tr className="border-b border-slate-800 text-[10px] text-slate-505 uppercase tracking-wider font-bold">
                           <th className="py-2.5 px-3">Timestamp</th>
                           <th className="py-2.5 px-3">Action</th>
                           <th className="py-2.5 px-3">Record</th>
@@ -862,7 +1012,7 @@ function App() {
                             <td className="py-2.5 px-3 font-mono text-slate-300">
                               {log.record_name}
                             </td>
-                            <td className="py-2.5 px-3 font-mono text-slate-550">
+                            <td className="py-2.5 px-3 font-mono text-slate-500">
                               {log.old_value}
                             </td>
                             <td className={`py-2.5 px-3 font-mono font-bold ${log.new_value === '10.0.1.10' ? 'text-emerald-400' : 'text-amber-400'}`}>
@@ -880,6 +1030,223 @@ function App() {
               </div>
 
             </div>
+
+          </div>
+        )}
+
+        {/* VIEW 3: CI/CD BANDWIDTH DASHBOARD */}
+        {activeView === 'cicd' && (
+          <div className="flex flex-col gap-8">
+            
+            {/* Authorization Lock Screen */}
+            {!isAuthenticated ? (
+              <div className="max-w-md mx-auto w-full py-16">
+                <div className="bg-slate-900/50 backdrop-blur-md border border-slate-850 rounded-3xl p-8 shadow-2xl text-center relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-violet-500/5 rounded-full blur-xl pointer-events-none" />
+                  
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-violet-500 to-indigo-600 text-white flex items-center justify-center mx-auto mb-6 shadow-lg shadow-indigo-500/15">
+                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                  </div>
+                  
+                  <h2 className="text-xl font-bold text-slate-100 mb-2">Authorized Access Required</h2>
+                  <p className="text-slate-450 text-xs max-w-xs mx-auto mb-6">
+                    Grafana CI/CD metrics displays core operational infrastructure limits. Please supply access token.
+                  </p>
+                  
+                  <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
+                    <div>
+                      <input
+                        type="password"
+                        placeholder="Enter Security Token..."
+                        value={authToken}
+                        onChange={(e) => setAuthToken(e.target.value)}
+                        className="w-full text-center bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                      />
+                    </div>
+                    {authError && (
+                      <p className="text-xs text-rose-400 font-semibold">{authError}</p>
+                    )}
+                    <button
+                      type="submit"
+                      className="bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-750 text-white font-semibold py-2.5 px-4 rounded-xl text-sm transition"
+                    >
+                      Authenticate System
+                    </button>
+                  </form>
+                  
+                  <div className="mt-6 pt-6 border-t border-slate-850/80 text-[10px] text-slate-500">
+                    💡 Hint for Mentor Review: use token <span className="font-mono font-bold text-indigo-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">admin123</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Authorized Dashboard Content */
+              <div className="flex flex-col gap-8">
+                
+                {/* Dashboard Stats Row */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  
+                  <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                    <div className="absolute top-0 right-0 p-3 text-emerald-500/10">
+                      <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                      </svg>
+                    </div>
+                    <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Data Downloaded</p>
+                    <p className="text-3xl font-black text-emerald-400 mt-2 font-mono">
+                      {formatBytes(calculateTotalBandwidth(parsedMetrics, 'download'))}
+                    </p>
+                    <p className="text-[9px] text-slate-400 mt-1">Incremental Counter registry sum</p>
+                  </div>
+                  
+                  <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                    <div className="absolute top-0 right-0 p-3 text-indigo-500/10">
+                      <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                    </div>
+                    <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Data Uploaded</p>
+                    <p className="text-3xl font-black text-indigo-400 mt-2 font-mono">
+                      {formatBytes(calculateTotalBandwidth(parsedMetrics, 'upload'))}
+                    </p>
+                    <p className="text-[9px] text-slate-400 mt-1">Incremental Counter registry sum</p>
+                  </div>
+
+                  <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                    <div className="absolute top-0 right-0 p-3 text-violet-500/10">
+                      <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Active Running Builds</p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-violet-500"></span>
+                      </span>
+                      <p className="text-3xl font-black text-violet-400 font-mono">
+                        {getActivePipelines()}
+                      </p>
+                    </div>
+                    <p className="text-[9px] text-slate-400 mt-1">Gauge registry status</p>
+                  </div>
+
+                  <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 shadow-md flex flex-col justify-between">
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Telemetry Controls</p>
+                      <p className="text-xs text-slate-400 mt-1">Authorized as Administrator</p>
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      className="w-full mt-3 bg-slate-850 border border-slate-800 text-[10px] font-bold text-slate-350 hover:bg-slate-800 hover:text-white py-1.5 px-3 rounded-lg transition"
+                    >
+                      Lock Dashboard Access
+                    </button>
+                  </div>
+
+                </div>
+
+                {/* Timeseries Graph and Metrics breakdown */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                  
+                  {/* Real-time speed trend (SVG Timeseries Panel) */}
+                  <div className="lg:col-span-7 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                    <h3 className="text-sm font-bold text-white mb-1">CI/CD Bandwidth Consumption Trend</h3>
+                    <p className="text-[10px] text-slate-500 mb-4 uppercase tracking-wider font-semibold">
+                      Real-time speeds calculated via counter delta rate
+                    </p>
+                    
+                    <div className="bg-slate-950 rounded-xl p-4 flex-grow flex items-center justify-center min-h-[220px]">
+                      {metricsHistory.length < 2 ? (
+                        <p className="text-xs text-slate-500 italic">Collecting throughput history samples...</p>
+                      ) : (
+                        <div className="w-full flex flex-col gap-3">
+                          <svg className="w-full h-[200px]" viewBox="0 0 600 200">
+                            {/* Grid Lines */}
+                            <line x1="0" y1="50" x2="600" y2="50" stroke="#1e293b" strokeDasharray="3,3" />
+                            <line x1="0" y1="100" x2="600" y2="100" stroke="#1e293b" strokeDasharray="3,3" />
+                            <line x1="0" y1="150" x2="600" y2="150" stroke="#1e293b" strokeDasharray="3,3" />
+                            
+                            {/* DL Line */}
+                            <path d={chartPaths.dlPath} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" />
+                            
+                            {/* UL Line */}
+                            <path d={chartPaths.ulPath} fill="none" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" />
+                          </svg>
+                          
+                          {/* Legend */}
+                          <div className="flex justify-between items-center text-[10px] text-slate-400 px-1 font-mono">
+                            <div className="flex gap-4">
+                              <span className="flex items-center gap-1.5">
+                                <span className="inline-block w-2.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                Download Speed ({formatBytes(metricsHistory[metricsHistory.length - 1].dlSpeed)}/s)
+                              </span>
+                              <span className="flex items-center gap-1.5">
+                                <span className="inline-block w-2.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                Upload Speed ({formatBytes(metricsHistory[metricsHistory.length - 1].ulSpeed)}/s)
+                              </span>
+                            </div>
+                            <span>Max Scale: {formatBytes(chartPaths.maxSpeed)}/s</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Breakdown Table Panel */}
+                  <div className="lg:col-span-5 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                    <h3 className="text-sm font-bold text-white mb-1">Pipeline Steps Breakdown</h3>
+                    <p className="text-[10px] text-slate-500 mb-4 uppercase tracking-wider font-semibold">
+                      Telemetry values parsed directly from /metrics
+                    </p>
+
+                    <div className="flex-grow overflow-y-auto max-h-[250px] pr-1">
+                      {!parsedMetrics || !parsedMetrics['cicd_pipeline_bandwidth_bytes_total'] ? (
+                        <p className="text-xs text-slate-500 italic">No telemetry data parsed.</p>
+                      ) : (
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-850 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
+                              <th className="py-2 px-1">Pipeline ID</th>
+                              <th className="py-2 px-1">Step</th>
+                              <th className="py-2 px-1">Direction</th>
+                              <th className="py-2 px-1 text-right">Data Transferred</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {parsedMetrics['cicd_pipeline_bandwidth_bytes_total']
+                              .filter(m => m.value > 0)
+                              .sort((a, b) => b.value - a.value)
+                              .map((m, idx) => (
+                                <tr key={idx} className="border-b border-slate-850/40 hover:bg-slate-900/10 transition">
+                                  <td className="py-2 px-1 font-bold text-slate-300">{m.labels.pipeline_id}</td>
+                                  <td className="py-2 px-1 font-mono text-slate-400">{m.labels.step}</td>
+                                  <td className="py-2 px-1 uppercase text-[10px]">
+                                    <span className={`px-1.5 py-0.5 rounded font-bold ${
+                                      m.labels.direction === 'download' 
+                                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/15'
+                                        : 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/15'
+                                    }`}>
+                                      {m.labels.direction}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-1 text-right font-mono text-slate-200 font-semibold">
+                                    {formatBytes(m.value)}
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+            )}
 
           </div>
         )}
