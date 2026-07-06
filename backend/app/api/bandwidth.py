@@ -31,16 +31,24 @@ def get_bandwidth_links(
     if elapsed <= 0 or elapsed > 60:
         elapsed = 3.0
         
-    # Fluctuate speeds and accrue data/cost in backend
+    from app.services.failed_event_service import get_network_status
+    network_active = get_network_status()
+    
+    # Fluctuate speeds and accrue data/cost in backend only if connection is active
     for lnk in links_db:
-        # Fluctuate speed slightly (-10 to +10 Mbps)
-        speed_delta = random.uniform(-10, 10)
-        lnk["speed"] = max(round(lnk["speed"] + speed_delta, 1), 10.0)
+        if network_active:
+            # Fluctuate speed slightly (-10 to +10 Mbps)
+            speed_delta = random.uniform(-10, 10)
+            lnk["speed"] = max(round(lnk["speed"] + speed_delta, 1), 10.0)
+            
+            # Accrue data volume: Speed (Mbps) * elapsed time (seconds) / 8 bits / 1024 to convert to GB
+            data_delta = (lnk["speed"] * elapsed) / 8192.0
+            lnk["totalData"] = round(lnk["totalData"] + data_delta, 3)
+            lnk["accruedCost"] = round(lnk["accruedCost"] + (data_delta * lnk["rate"]), 3)
+        else:
+            # Drop speed to 0.0 Mbps when simulated offline; freeze accrued cost and data.
+            lnk["speed"] = 0.0
         
-        # Accrue data volume: Speed (Mbps) * elapsed time (seconds) / 8 bits / 1024 to convert to GB
-        data_delta = (lnk["speed"] * elapsed) / 8192.0
-        lnk["totalData"] = round(lnk["totalData"] + data_delta, 3)
-        lnk["accruedCost"] = round(lnk["accruedCost"] + (data_delta * lnk["rate"]), 3)
         
     # Apply filters
     filtered_links = links_db

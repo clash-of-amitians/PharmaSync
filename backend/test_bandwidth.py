@@ -32,6 +32,24 @@ class TestBandwidthRouter(unittest.TestCase):
         self.assertEqual(len(data["links"]), 2)
         for lnk in data["links"]:
             self.assertEqual(lnk["type"], "VPN")
+            
+    def test_offline_freeze(self):
+        from app.services.failed_event_service import set_network_status
+        
+        # Test offline state
+        set_network_status(False)
+        data_offline = get_bandwidth_links()
+        
+        for lnk in data_offline["links"]:
+            self.assertEqual(lnk["speed"], 0.0)
+            
+        # Restore online state
+        set_network_status(True)
+        data_online = get_bandwidth_links()
+        
+        for lnk in data_online["links"]:
+            self.assertGreater(lnk["speed"], 0.0)
 
 if __name__ == "__main__":
     unittest.main()
+
