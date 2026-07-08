@@ -93,6 +93,21 @@ function App() {
   const [syncSuccessMsg, setSyncSuccessMsg] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // Notification Dashboard States
+  const [notifConfig, setNotifConfig] = useState(null);
+  const [notifLogs, setNotifLogs] = useState([]);
+  const [notifChannel, setNotifChannel] = useState('SMS');
+  const [notifRecipients, setNotifRecipients] = useState('');
+  const [notifPipelineId, setNotifPipelineId] = useState('build-ui');
+  const [notifStep, setNotifStep] = useState('compile');
+  const [notifStatus, setNotifStatus] = useState('SUCCESS');
+  const [notifDuration, setNotifDuration] = useState('4.5');
+  const [notifBandwidth, setNotifBandwidth] = useState('15728640'); // 15 MB in bytes
+  const [notifConfigSaving, setNotifConfigSaving] = useState(false);
+  const [notifTriggerLoading, setNotifTriggerLoading] = useState(false);
+  const [notifSuccessMsg, setNotifSuccessMsg] = useState('');
+  const [notifErrorMsg, setNotifErrorMsg] = useState('');
+
   const handleVDILogin = async (e) => {
     e.preventDefault();
     setVdiLoading(true);
@@ -290,6 +305,32 @@ function App() {
       } catch (syncErr) {
         console.error("Error fetching sync history:", syncErr);
       }
+
+      // 9. Fetch Notifications Configuration and Logs
+      try {
+        const configRes = await fetch('/notifications/config');
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          setNotifConfig(configData);
+          // Set local input states on first load
+          if (!notifRecipients) {
+            setNotifChannel(configData.active_channel);
+            setNotifRecipients(
+              configData.active_channel === 'SMS' 
+                ? configData.sms_recipients.join(', ') 
+                : configData.email_recipients.join(', ')
+            );
+          }
+        }
+        
+        const logsRes = await fetch('/notifications/logs');
+        if (logsRes.ok) {
+          const logsData = await logsRes.json();
+          setNotifLogs(logsData || []);
+        }
+      } catch (notifErr) {
+        console.error("Error fetching notifications data:", notifErr);
+      }
     } catch (err) {
       console.error("API Polling Error:", err);
       // Gracefully handle connectivity errors
@@ -361,6 +402,85 @@ function App() {
       addTerminalLog(`❌ Network Toggle Error: ${err.message}`);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Update Notification Configuration handler
+  const handleUpdateNotifConfig = async (e) => {
+    e.preventDefault();
+    setNotifConfigSaving(true);
+    setNotifErrorMsg('');
+    setNotifSuccessMsg('');
+    
+    const parsedRecipients = notifRecipients.split(',').map(r => r.trim()).filter(Boolean);
+    
+    try {
+      const res = await fetch('/notifications/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          active_channel: notifChannel,
+          recipients: parsedRecipients
+        })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setNotifConfig(data);
+        setNotifSuccessMsg("Configuration updated successfully!");
+        addTerminalLog(`📢 Notification channel set to ${notifChannel} with ${parsedRecipients.length} recipients.`);
+      } else {
+        const errorData = await res.json();
+        setNotifErrorMsg(errorData.detail || "Failed to update notification configuration.");
+      }
+    } catch {
+      setNotifErrorMsg("Network error: failed to update notification configuration.");
+    } finally {
+      setNotifConfigSaving(false);
+    }
+  };
+
+  // Trigger Mock Test Notification handler
+  const handleTriggerTestNotif = async (e) => {
+    e.preventDefault();
+    setNotifTriggerLoading(true);
+    setNotifErrorMsg('');
+    setNotifSuccessMsg('');
+    
+    try {
+      const res = await fetch('/notifications/trigger', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          pipeline_id: notifPipelineId,
+          step: notifStep,
+          status: notifStatus,
+          duration: parseFloat(notifDuration),
+          bandwidth_bytes: parseInt(notifBandwidth, 10)
+        })
+      });
+      
+      if (res.ok) {
+        setNotifSuccessMsg("Test notification triggered successfully!");
+        addTerminalLog(`🚀 Test Notification dispatched for ${notifPipelineId} (${notifStatus})`);
+        
+        // Fetch updated logs immediately
+        const logsRes = await fetch('/notifications/logs');
+        if (logsRes.ok) {
+          setNotifLogs(await logsRes.json());
+        }
+      } else {
+        const errorData = await res.json();
+        setNotifErrorMsg(errorData.detail || "Failed to trigger test notification.");
+      }
+    } catch {
+      setNotifErrorMsg("Network error: failed to trigger test notification.");
+    } finally {
+      setNotifTriggerLoading(false);
     }
   };
 
@@ -865,6 +985,16 @@ function App() {
                 }`}
               >
                 Inventory Sync
+              </button>
+              <button
+                onClick={() => setActiveView('notifications')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeView === 'notifications'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                CI/CD Alerts
               </button>
             </div>
 
@@ -2409,6 +2539,369 @@ function App() {
                                 </div>
                               </div>
                             )}
+
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 7: CI/CD NOTIFICATION SYSTEM DASHBOARD */}
+        {activeView === 'notifications' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            {/* Left Column: Config Panel & Manual Trigger */}
+            <div className="lg:col-span-4 flex flex-col gap-8">
+              
+              {/* Channel Selector Config Card */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Alert Channels Configuration
+                </h2>
+
+                <form onSubmit={handleUpdateNotifConfig} className="flex flex-col gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                      Active Channel
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNotifChannel('SMS');
+                          if (notifConfig) setNotifRecipients(notifConfig.sms_recipients.join(', '));
+                        }}
+                        className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border flex items-center justify-center gap-2 cursor-pointer ${
+                          notifChannel === 'SMS'
+                            ? 'bg-indigo-600/10 border-indigo-500/30 text-indigo-400 shadow-inner border-indigo-500/20'
+                            : 'bg-slate-950/40 border-slate-850 text-slate-400 hover:border-slate-800'
+                        }`}
+                      >
+                        📱 SMS Carrier
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNotifChannel('EMAIL');
+                          if (notifConfig) setNotifRecipients(notifConfig.email_recipients.join(', '));
+                        }}
+                        className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border flex items-center justify-center gap-2 cursor-pointer ${
+                          notifChannel === 'EMAIL'
+                            ? 'bg-indigo-600/10 border-indigo-500/30 text-indigo-400 shadow-inner border-indigo-500/20'
+                            : 'bg-slate-950/40 border-slate-850 text-slate-400 hover:border-slate-800'
+                        }`}
+                      >
+                        📧 Compressed Email
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Recipients (comma separated)
+                    </label>
+                    <textarea
+                      value={notifRecipients}
+                      onChange={(e) => setNotifRecipients(e.target.value)}
+                      required
+                      rows="2"
+                      placeholder={notifChannel === 'SMS' ? '+15550199, +919876543210' : 'user@domain.com, user2@domain.com'}
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={notifConfigSaving}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition shadow-lg shadow-indigo-500/10 disabled:opacity-50"
+                  >
+                    {notifConfigSaving ? 'Saving...' : 'Apply Configuration'}
+                  </button>
+                </form>
+              </div>
+
+              {/* Trigger Notification Test Form */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  </svg>
+                  Trigger Test Notification
+                </h2>
+
+                <form onSubmit={handleTriggerTestNotif} className="flex flex-col gap-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Pipeline
+                      </label>
+                      <select
+                        value={notifPipelineId}
+                        onChange={(e) => setNotifPipelineId(e.target.value)}
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                      >
+                        <option value="build-ui">build-ui</option>
+                        <option value="test-backend">test-backend</option>
+                        <option value="deploy-staging">deploy-staging</option>
+                        <option value="security-audit">security-audit</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Status
+                      </label>
+                      <select
+                        value={notifStatus}
+                        onChange={(e) => setNotifStatus(e.target.value)}
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                      >
+                        <option value="STARTED">STARTED</option>
+                        <option value="SUCCESS">SUCCESS</option>
+                        <option value="FAILED">FAILED</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Step Name
+                      </label>
+                      <input
+                        type="text"
+                        value={notifStep}
+                        onChange={(e) => setNotifStep(e.target.value)}
+                        required
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Duration (sec)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={notifDuration}
+                        onChange={(e) => setNotifDuration(e.target.value)}
+                        required
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Bandwidth (Bytes)
+                    </label>
+                    <input
+                      type="number"
+                      value={notifBandwidth}
+                      onChange={(e) => setNotifBandwidth(e.target.value)}
+                      required
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                    />
+                  </div>
+
+                  {notifErrorMsg && (
+                    <div className="bg-rose-500/10 border border-rose-500/15 text-[11px] text-rose-450 p-3 rounded-xl">
+                      ❌ {notifErrorMsg}
+                    </div>
+                  )}
+
+                  {notifSuccessMsg && (
+                    <div className="bg-emerald-500/10 border border-emerald-500/15 text-[11px] text-emerald-450 p-3 rounded-xl">
+                      ✅ {notifSuccessMsg}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={notifTriggerLoading}
+                    className="w-full bg-violet-600 hover:bg-violet-500 active:bg-violet-750 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition shadow-lg shadow-violet-500/10 disabled:opacity-50"
+                  >
+                    {notifTriggerLoading ? 'Sending Alert...' : 'Dispatch Test Alert'}
+                  </button>
+                </form>
+              </div>
+
+            </div>
+
+            {/* Right Column: Analytics & Dispatch logs */}
+            <div className="lg:col-span-8 flex flex-col gap-8">
+              
+              {/* Analytics Header Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Active Channel Card */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400 border border-indigo-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Active Channel</h3>
+                    <p className="text-xl font-black text-white font-mono uppercase">
+                      {notifConfig ? notifConfig.active_channel : 'Loading...'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Total Dispatched Card */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-450 border border-emerald-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Total Alerts Sent</h3>
+                    <p className="text-xl font-black text-white font-mono">{notifLogs.length}</p>
+                  </div>
+                </div>
+
+                {/* Bandwidth Savings Card */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-purple-500/10 rounded-xl text-purple-400 border border-purple-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 12l3-3 3 3 4-4M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2-2v14a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Avg. Email Compression</h3>
+                    <p className="text-xl font-black text-white font-mono">
+                      {notifLogs.filter(l => l.channel === 'EMAIL').length === 0 ? 'N/A' : (
+                        (notifLogs.filter(l => l.channel === 'EMAIL').reduce((acc, curr) => acc + curr.saving_percentage, 0) / 
+                        notifLogs.filter(l => l.channel === 'EMAIL').length).toFixed(1) + '%'
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Log History */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl flex-grow flex flex-col min-h-[400px]">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
+                  <div>
+                    <h3 className="text-base font-bold text-white">Dispatched Alerts Real-Time Log</h3>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                      Live audit log of low-bandwidth stakeholder broadcasts
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const res = await fetch('/notifications/logs');
+                      if (res.ok) {
+                        setNotifLogs(await res.json());
+                      }
+                    }}
+                    className="p-2 rounded bg-slate-800 hover:bg-slate-750 border border-slate-700 transition"
+                    title="Refresh logs"
+                  >
+                    <svg className="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8.89M9 11l3 3L22 4" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto max-h-[500px] flex-grow pr-1">
+                  {notifLogs.length === 0 ? (
+                    <div className="text-center py-20 text-slate-550 italic text-xs">
+                      No CI/CD notifications dispatched yet. Wait for simulation cycles or trigger a manual test alert.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {notifLogs.map((log) => {
+                        const isSuccess = log.status === 'SUCCESS';
+                        const isFailed = log.status === 'FAILED';
+                        return (
+                          <div
+                            key={log.notification_id}
+                            className={`p-4 rounded-xl border transition flex flex-col gap-3 ${
+                              isFailed ? 'bg-rose-950/10 border-rose-900/15 hover:border-rose-900/25' :
+                              'bg-slate-950/40 border-slate-850 hover:border-slate-800'
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-indigo-400 font-mono">{log.notification_id}</span>
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase ${
+                                  log.channel === 'SMS' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/15' : 'bg-blue-500/10 text-blue-400 border border-blue-500/15'
+                                }`}>
+                                  {log.channel}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  {new Date(log.timestamp).toLocaleTimeString()}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase font-mono ${
+                                  isSuccess ? 'bg-emerald-500/10 text-emerald-450 border border-emerald-500/20' :
+                                  isFailed ? 'bg-rose-500/10 text-rose-455 border border-rose-500/20' :
+                                  'bg-blue-500/10 text-blue-450 border border-blue-500/20'
+                                }`}>
+                                  {log.status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs pt-1 border-t border-slate-900/40">
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Event Details</span>
+                                <span className="font-bold text-slate-200 font-mono text-[11px]">{log.pipeline_id}</span>
+                                <span className="text-slate-400 text-[10px] block truncate">Step: {log.step}</span>
+                              </div>
+                              
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Bandwidth Cost</span>
+                                <span className="font-bold text-slate-200 font-mono text-[11px]">
+                                  {log.channel === 'EMAIL' ? (
+                                    <>
+                                      {log.compressed_size_bytes} B
+                                      <span className="text-slate-455 text-[10px] block font-normal">
+                                        from {log.uncompressed_size_bytes} B (Saved: {log.saving_percentage}%)
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      {log.uncompressed_size_bytes} B
+                                      <span className="text-slate-455 text-[10px] block font-normal">No IP overhead</span>
+                                    </>
+                                  )}
+                                </span>
+                              </div>
+
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Recipients</span>
+                                <span className="text-slate-300 font-mono text-[10px] block truncate" title={log.recipients.join(', ')}>
+                                  {log.recipients.join(', ')}
+                                </span>
+                                <span className="text-emerald-450 font-bold text-[9px] uppercase tracking-wider flex items-center gap-1.5 mt-0.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                  {log.dispatch_status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-900 mt-1">
+                              <span className="text-slate-500 text-[9px] uppercase tracking-wider block font-semibold mb-1">Alert Payload Body</span>
+                              <pre className="font-mono text-[10px] text-slate-300 whitespace-pre-wrap select-all font-semibold leading-relaxed">
+                                {log.body_preview}
+                              </pre>
+                            </div>
 
                           </div>
                         );
