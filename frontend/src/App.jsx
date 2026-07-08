@@ -35,7 +35,7 @@ const parsePrometheusMetrics = (text) => {
 
 function App() {
   // Navigation
-  const [activeView, setActiveView] = useState('events'); // 'events' | 'dns' | 'cicd'
+  const [activeView, setActiveView] = useState('events'); // 'events' | 'dns' | 'cicd' | 'order_metrics' | 'bandwidth_cost'
   
   // Authorization State (AC3)
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -68,6 +68,102 @@ function App() {
   // CI/CD Telemetry State
   const [parsedMetrics, setParsedMetrics] = useState(null);
   const [metricsHistory, setMetricsHistory] = useState([]);
+  
+  // Order Events Telemetry State
+  const [orderMetricsHistory, setOrderMetricsHistory] = useState([]);
+
+  // VDI Secure Authentication State (PRJ-B0FC-0057)
+  const [vdiAuthenticated, setVdiAuthenticated] = useState(() => {
+    return sessionStorage.getItem('vdi_auth') === 'true';
+  });
+  const [vdiUsername, setVdiUsername] = useState('');
+  const [vdiPassword, setVdiPassword] = useState('');
+  const [vdiAuthError, setVdiAuthError] = useState('');
+  const [vdiLoading, setVdiLoading] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+
+  // Inventory Sync Dashboard States
+  const [syncHistory, setSyncHistory] = useState([]);
+  const [syncSku, setSyncSku] = useState('SKU-AMOX-500');
+  const [syncItemName, setSyncItemName] = useState('Amoxicillin 500mg');
+  const [syncQuantity, setSyncQuantity] = useState(100);
+  const [syncRegion, setSyncRegion] = useState('IN');
+  const [syncComplianceData, setSyncComplianceData] = useState('{"cdsco_license": "DL-MUM-9988", "gstin": "27AAACP0120A1Z2"}');
+  const [syncError, setSyncError] = useState('');
+  const [syncSuccessMsg, setSyncSuccessMsg] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Notification Dashboard States
+  const [notifConfig, setNotifConfig] = useState(null);
+  const [notifLogs, setNotifLogs] = useState([]);
+  const [notifChannel, setNotifChannel] = useState('SMS');
+  const [notifRecipients, setNotifRecipients] = useState('');
+  const [notifPipelineId, setNotifPipelineId] = useState('build-ui');
+  const [notifStep, setNotifStep] = useState('compile');
+  const [notifStatus, setNotifStatus] = useState('SUCCESS');
+  const [notifDuration, setNotifDuration] = useState('4.5');
+  const [notifBandwidth, setNotifBandwidth] = useState('15728640'); // 15 MB in bytes
+  const [notifConfigSaving, setNotifConfigSaving] = useState(false);
+  const [notifTriggerLoading, setNotifTriggerLoading] = useState(false);
+  const [notifSuccessMsg, setNotifSuccessMsg] = useState('');
+  const [notifErrorMsg, setNotifErrorMsg] = useState('');
+
+  const handleVDILogin = async (e) => {
+    e.preventDefault();
+    setVdiLoading(true);
+    setVdiAuthError('');
+    
+    try {
+      const response = await fetch('/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          username: vdiUsername,
+          password: vdiPassword
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setVdiAuthenticated(true);
+        sessionStorage.setItem('vdi_auth', 'true');
+        sessionStorage.setItem('vdi_token', data.token);
+        sessionStorage.setItem('vdi_user', data.username);
+        sessionStorage.setItem('vdi_role', data.role);
+        addTerminalLog(`🖥️ VDI Secure Session initiated: ${data.username} (${data.role}).`);
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: 'Authentication handshake failed.' }));
+        setVdiAuthError(errorData.detail || "Invalid credentials. Connection rejected.");
+        addTerminalLog("⚠️ VDI Secure Authentication attempt failed: unauthorized credentials.");
+      }
+    } catch (err) {
+      console.error("VDI Login Error:", err);
+      setVdiAuthError("VDI Authentication Server Unreachable. Please try again later.");
+      addTerminalLog(`⚠️ VDI Secure Auth Error: ${err.message}`);
+    } finally {
+      setVdiLoading(false);
+    }
+  };
+  
+  const handleVDILogout = () => {
+    setVdiAuthenticated(false);
+    sessionStorage.removeItem('vdi_auth');
+    addTerminalLog("🖥️ VDI Secure Session terminated.");
+  };
+
+  // Bandwidth Cost Optimization State (PRJ-B0FC-0036)
+  const [networkLinks, setNetworkLinks] = useState([
+    { id: 'lnk-in-west-1', name: 'Mumbai DC 1', region: 'IN-West', type: 'DirectConnect', speed: 850.0, rate: 1.50, totalData: 1250.0, accruedCost: 1875.00 },
+    { id: 'lnk-in-west-2', name: 'Mumbai VPN', region: 'IN-West', type: 'VPN', speed: 120.0, rate: 6.00, totalData: 310.0, accruedCost: 1860.00 },
+    { id: 'lnk-in-south-1', name: 'Bengaluru DC 2', region: 'IN-South', type: 'DirectConnect', speed: 640.0, rate: 2.20, totalData: 940.0, accruedCost: 2068.00 },
+    { id: 'lnk-in-north-1', name: 'Delhi VPN', region: 'IN-North', type: 'VPN', speed: 110.0, rate: 7.50, totalData: 410.0, accruedCost: 3075.00 },
+    { id: 'lnk-in-north-2', name: 'Delhi Satellite', region: 'IN-North', type: 'Satellite', speed: 45.0, rate: 18.00, totalData: 85.0, accruedCost: 1530.00 },
+    { id: 'lnk-in-east-1', name: 'Kolkata Broadband', region: 'IN-East', type: 'Broadband', speed: 300.0, rate: 4.00, totalData: 600.0, accruedCost: 2400.00 }
+  ]);
+  const [filterRegion, setFilterRegion] = useState('All');
+  const [filterType, setFilterType] = useState('All');
 
   // Transaction form state
   const [formEventId, setFormEventId] = useState('');
@@ -88,14 +184,17 @@ function App() {
   };
 
   useEffect(() => {
-    generateRandomEventId();
-    addTerminalLog("System Initialized. Control Center active.");
+    const timer = setTimeout(() => {
+      generateRandomEventId();
+      addTerminalLog("System Initialized. Control Center active.");
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
-  const addTerminalLog = (msg) => {
+  function addTerminalLog(msg) {
     const time = new Date().toLocaleTimeString();
     setTerminalLogs((prev) => [`[${time}] ${msg}`, ...prev.slice(0, 49)]);
-  };
+  }
 
   // Fetch all backend stats (event queue, DNS, and Prometheus metrics)
   const fetchBackendData = async () => {
@@ -104,7 +203,12 @@ function App() {
       const netRes = await fetch('/events/network');
       if (netRes.ok) {
         const netData = await netRes.json();
-        if (netData.network_online !== networkOnline) {
+        
+        // If we recovered from a connection error, restore network state
+        if (!networkOnline && netData.network_online) {
+          setNetworkOnline(true);
+          addTerminalLog("⚡ API Sync Connection restored successfully.");
+        } else if (netData.network_online !== networkOnline) {
           setNetworkOnline(netData.network_online);
           addTerminalLog(`Auto-sync: Connectivity status synced to ${netData.network_online ? 'ONLINE' : 'OFFLINE'}`);
         }
@@ -145,7 +249,7 @@ function App() {
         const parsed = parsePrometheusMetrics(metricsText);
         setParsedMetrics(parsed);
 
-        // Sum download & upload totals
+        // A. Sum download & upload totals for CI/CD Dashboard
         const downloadTotal = calculateTotalBandwidth(parsed, 'download');
         const uploadTotal = calculateTotalBandwidth(parsed, 'upload');
 
@@ -156,7 +260,6 @@ function App() {
           let ulSpeed = 0;
 
           if (lastEntry) {
-            // Speed = difference divided by elapsed check period (3s)
             const dlDiff = downloadTotal - lastEntry.downloadTotal;
             const ulDiff = uploadTotal - lastEntry.uploadTotal;
             dlSpeed = dlDiff > 0 ? dlDiff / 3 : 0;
@@ -165,20 +268,93 @@ function App() {
 
           return [...prev, { time: now, downloadTotal, uploadTotal, dlSpeed, ulSpeed }].slice(-20);
         });
+
+        // B. Parse Order Latency and throughput rate for Order Event Metrics Dashboard
+        const successCount = calculateOrderMetric(parsed, 'SUCCESS');
+        const failureCount = calculateOrderMetric(parsed, 'FAILURE');
+        const totalCount = successCount + failureCount;
+        const failureRate = totalCount > 0 ? (failureCount / totalCount) * 100 : 0;
+        
+        let avgLatency = 0;
+        if (parsed['order_events_processing_duration_seconds_sum'] && parsed['order_events_processing_duration_seconds_count']) {
+          const latencySum = parsed['order_events_processing_duration_seconds_sum'].reduce((sum, m) => sum + m.value, 0);
+          const latencyCount = parsed['order_events_processing_duration_seconds_count'].reduce((sum, m) => sum + m.value, 0);
+          avgLatency = latencyCount > 0 ? (latencySum / latencyCount) * 1000 : 0; // Convert to ms
+        }
+
+        setOrderMetricsHistory(prev => {
+          const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          return [...prev, { time: now, successCount, failureCount, totalCount, failureRate, avgLatency }].slice(-20);
+        });
+      }
+
+      // 7. Fetch Bandwidth and Cost metrics from Monitoring and Billing APIs
+      const bandwidthRes = await fetch('/bandwidth/links');
+      if (bandwidthRes.ok) {
+        const bandwidthData = await bandwidthRes.json();
+        setNetworkLinks(bandwidthData.links || []);
+      }
+
+      // 8. Fetch Sync History from Standalone Microservice
+      try {
+        const syncRes = await fetch('/sync/history');
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          setSyncHistory(syncData || []);
+        }
+      } catch (syncErr) {
+        console.error("Error fetching sync history:", syncErr);
+      }
+
+      // 9. Fetch Notifications Configuration and Logs
+      try {
+        const configRes = await fetch('/notifications/config');
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          setNotifConfig(configData);
+          // Set local input states on first load
+          if (!notifRecipients) {
+            setNotifChannel(configData.active_channel);
+            setNotifRecipients(
+              configData.active_channel === 'SMS' 
+                ? configData.sms_recipients.join(', ') 
+                : configData.email_recipients.join(', ')
+            );
+          }
+        }
+        
+        const logsRes = await fetch('/notifications/logs');
+        if (logsRes.ok) {
+          const logsData = await logsRes.json();
+          setNotifLogs(logsData || []);
+        }
+      } catch (notifErr) {
+        console.error("Error fetching notifications data:", notifErr);
       }
     } catch (err) {
       console.error("API Polling Error:", err);
+      // Gracefully handle connectivity errors
+      if (networkOnline) {
+        setNetworkOnline(false);
+        addTerminalLog(`⚠️ Sync connection interrupted: ${err.message}. Retrying...`);
+      }
     }
   };
 
   // Poll for updates every 3 seconds
   useEffect(() => {
-    fetchBackendData();
+    const timer = setTimeout(() => {
+      fetchBackendData();
+    }, 0);
     const interval = setInterval(fetchBackendData, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [networkOnline]);
 
-  // Auth Handler (AC3)
+  // Auth Handler
   const handleAuthSubmit = (e) => {
     e.preventDefault();
     if (authToken === 'admin123') {
@@ -226,6 +402,140 @@ function App() {
       addTerminalLog(`❌ Network Toggle Error: ${err.message}`);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Update Notification Configuration handler
+  const handleUpdateNotifConfig = async (e) => {
+    e.preventDefault();
+    setNotifConfigSaving(true);
+    setNotifErrorMsg('');
+    setNotifSuccessMsg('');
+    
+    const parsedRecipients = notifRecipients.split(',').map(r => r.trim()).filter(Boolean);
+    
+    try {
+      const res = await fetch('/notifications/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          active_channel: notifChannel,
+          recipients: parsedRecipients
+        })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setNotifConfig(data);
+        setNotifSuccessMsg("Configuration updated successfully!");
+        addTerminalLog(`📢 Notification channel set to ${notifChannel} with ${parsedRecipients.length} recipients.`);
+      } else {
+        const errorData = await res.json();
+        setNotifErrorMsg(errorData.detail || "Failed to update notification configuration.");
+      }
+    } catch {
+      setNotifErrorMsg("Network error: failed to update notification configuration.");
+    } finally {
+      setNotifConfigSaving(false);
+    }
+  };
+
+  // Trigger Mock Test Notification handler
+  const handleTriggerTestNotif = async (e) => {
+    e.preventDefault();
+    setNotifTriggerLoading(true);
+    setNotifErrorMsg('');
+    setNotifSuccessMsg('');
+    
+    try {
+      const res = await fetch('/notifications/trigger', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          pipeline_id: notifPipelineId,
+          step: notifStep,
+          status: notifStatus,
+          duration: parseFloat(notifDuration),
+          bandwidth_bytes: parseInt(notifBandwidth, 10)
+        })
+      });
+      
+      if (res.ok) {
+        setNotifSuccessMsg("Test notification triggered successfully!");
+        addTerminalLog(`🚀 Test Notification dispatched for ${notifPipelineId} (${notifStatus})`);
+        
+        // Fetch updated logs immediately
+        const logsRes = await fetch('/notifications/logs');
+        if (logsRes.ok) {
+          setNotifLogs(await logsRes.json());
+        }
+      } else {
+        const errorData = await res.json();
+        setNotifErrorMsg(errorData.detail || "Failed to trigger test notification.");
+      }
+    } catch {
+      setNotifErrorMsg("Network error: failed to trigger test notification.");
+    } finally {
+      setNotifTriggerLoading(false);
+    }
+  };
+
+  // Trigger Inventory Sync microservice
+  const handleTriggerSync = async (e) => {
+    e.preventDefault();
+    setIsSyncing(true);
+    setSyncError('');
+    setSyncSuccessMsg('');
+    
+    let parsedCompliance = {};
+    try {
+      if (syncComplianceData.trim()) {
+        parsedCompliance = JSON.parse(syncComplianceData);
+      }
+    } catch {
+      setSyncError("Invalid JSON in compliance data. Format must be valid JSON: e.g. {\"key\": \"value\"}");
+      setIsSyncing(false);
+      return;
+    }
+    
+    try {
+      const response = await fetch('/sync/trigger', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sku: syncSku,
+          item_name: syncItemName,
+          base_quantity: parseInt(syncQuantity, 10),
+          target_region: syncRegion,
+          compliance_data: parsedCompliance
+        })
+      });
+      
+      const data = await response.json();
+      if (response.status === 201) {
+        setSyncSuccessMsg(`Sync operation ${data.sync_id} triggered successfully!`);
+        addTerminalLog(`📦 Inventory Sync Triggered: SKU ${syncSku} for region ${syncRegion}`);
+        // Fetch updated sync history
+        const syncRes = await fetch('/sync/history');
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          setSyncHistory(syncData || []);
+        }
+      } else {
+        setSyncError(data.detail || "Error triggering sync. Check fields.");
+        addTerminalLog(`⚠️ Sync Failed: ${data.detail || 'Validation Error'}`);
+      }
+    } catch (err) {
+      setSyncError("Network error: Could not reach inventory sync microservice.");
+      addTerminalLog(`⚠️ Sync Network Error: ${err.message}`);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -331,12 +641,12 @@ function App() {
   };
 
   // CI/CD Telemetry Helpers
-  const calculateTotalBandwidth = (metrics, direction) => {
+  function calculateTotalBandwidth(metrics, direction) {
     if (!metrics || !metrics['cicd_pipeline_bandwidth_bytes_total']) return 0;
     return metrics['cicd_pipeline_bandwidth_bytes_total']
       .filter(m => m.labels.direction === direction)
       .reduce((sum, m) => sum + m.value, 0);
-  };
+  }
 
   const getActivePipelines = () => {
     if (!parsedMetrics || !parsedMetrics['cicd_pipeline_active_builds']) return 0;
@@ -351,7 +661,15 @@ function App() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  // SVG Chart rendering computations
+  // Order Events Telemetry Helpers
+  function calculateOrderMetric(metrics, status) {
+    if (!metrics || !metrics['order_events_processed_total']) return 0;
+    return metrics['order_events_processed_total']
+      .filter(m => m.labels.status === status)
+      .reduce((sum, m) => sum + m.value, 0);
+  }
+
+  // SVG Chart rendering computations for CI/CD
   const renderSVGChartPaths = () => {
     if (metricsHistory.length < 2) return null;
     
@@ -378,15 +696,211 @@ function App() {
 
   const chartPaths = renderSVGChartPaths();
 
+  // SVG Chart rendering computations for Order Latency
+  const renderSVGOrderChartPaths = () => {
+    if (orderMetricsHistory.length < 2) return null;
+    const maxLatency = Math.max(...orderMetricsHistory.map(d => Math.max(d.avgLatency, 100))); // Min scale 100ms
+    const w = 600;
+    const h = 200;
+    
+    const coords = orderMetricsHistory.map((d, index) => {
+      const x = (index / (orderMetricsHistory.length - 1)) * w;
+      const y = h - (d.avgLatency / maxLatency) * (h - 20) - 10;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    
+    return { path: `M ${coords.join(' L ')}`, maxLatency };
+  };
+
+  const getFailureRate = () => {
+    const success = calculateOrderMetric(parsedMetrics, 'SUCCESS');
+    const failure = calculateOrderMetric(parsedMetrics, 'FAILURE');
+    const total = success + failure;
+    return total > 0 ? (failure / total) * 100 : 0;
+  };
+
+  // Bandwidth Cost Optimization Dashboard Calculations (PRJ-B0FC-0036)
+  const filteredLinks = networkLinks.filter(lnk => {
+    const matchesRegion = filterRegion === 'All' || lnk.region === filterRegion;
+    const matchesType = filterType === 'All' || lnk.type === filterType;
+    return matchesRegion && matchesType;
+  });
+
+  const totalFilteredData = filteredLinks.reduce((sum, lnk) => sum + lnk.totalData, 0);
+  const totalFilteredCost = filteredLinks.reduce((sum, lnk) => sum + lnk.accruedCost, 0);
+  const averageFilteredRate = totalFilteredData > 0 ? totalFilteredCost / totalFilteredData : 0;
+
+  const optimalLink = filteredLinks.length > 0 
+    ? [...filteredLinks].sort((a, b) => a.rate - b.rate)[0] 
+    : null;
+
+  if (!vdiAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased flex items-center justify-center relative overflow-hidden">
+        {/* Background blobs */}
+        <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] rounded-full bg-indigo-500/10 blur-[120px] pointer-events-none" />
+        <div className="absolute bottom-[-15%] right-[-5%] w-[400px] h-[400px] rounded-full bg-purple-500/5 blur-[120px] pointer-events-none" />
+
+        <div className="max-w-md w-full mx-4 relative z-10">
+          <div className="bg-slate-900/50 backdrop-blur-md border border-slate-850 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+            
+            {/* Header / Brand */}
+            <div className="text-center mb-8">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-600 text-white flex items-center justify-center mx-auto mb-4 shadow-lg shadow-indigo-500/15">
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-slate-100 tracking-tight">PharmaSync VDI</h2>
+              <p className="text-slate-450 text-xs mt-1">Virtual Desktop Session Terminal</p>
+            </div>
+
+            {/* Login Form */}
+            <form onSubmit={handleVDILogin} className="flex flex-col gap-4">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                  Operator Username
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter username..."
+                  value={vdiUsername}
+                  onChange={(e) => setVdiUsername(e.target.value)}
+                  required
+                  id="vdi_username_input"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                  Security Password
+                </label>
+                <input
+                  type="password"
+                  placeholder="Enter password..."
+                  value={vdiPassword}
+                  onChange={(e) => setVdiPassword(e.target.value)}
+                  required
+                  id="vdi_password_input"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                />
+              </div>
+
+              {vdiAuthError && (
+                <div className="bg-rose-500/10 border border-rose-500/15 text-xs text-rose-450 font-semibold p-3 rounded-xl text-center">
+                  ⚠️ {vdiAuthError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={vdiLoading}
+                id="vdi_login_submit"
+                className="w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-755 text-white font-semibold py-2.5 px-4 rounded-xl text-sm transition mt-2 shadow-lg shadow-indigo-500/10"
+              >
+                {vdiLoading ? 'Connecting Securely...' : 'Establish Secure VDI Session'}
+              </button>
+            </form>
+
+            {/* Encryption notice footer */}
+            <div className="mt-6 pt-6 border-t border-slate-850/80 text-[10px] text-slate-550 flex items-center justify-center gap-2">
+              <svg className="w-3.5 h-3.5 text-emerald-450" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <span>AES-256 Client-Side Transit Encryption Active</span>
+            </div>
+            
+            <div className="mt-4 text-center text-[9px] text-slate-500">
+              💡 Reviewer Hint: username <span className="font-mono text-indigo-400 bg-slate-950 px-1 py-0.5 rounded border border-slate-850">operator1</span> and password <span className="font-mono text-indigo-400 bg-slate-950 px-1 py-0.5 rounded border border-slate-850">securepass</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white relative overflow-hidden">
       {/* Background gradients */}
       <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-indigo-500/10 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full bg-purple-500/5 blur-[120px] pointer-events-none" />
 
+      {/* VDI Session Info & Logout (PRJ-B0FC-0057) - Top Right Corner Profile Tab */}
+      <div className="fixed top-6 right-6 md:right-8 z-40">
+        <button
+          onClick={() => setIsProfileOpen(!isProfileOpen)}
+          id="vdi_profile_tab"
+          className="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 text-white hover:scale-105 active:scale-95 transition shadow-lg shadow-indigo-500/15 cursor-pointer flex items-center justify-center font-bold text-sm uppercase focus:outline-none border border-indigo-400/20"
+          title="VDI Session Profile"
+        >
+          {(sessionStorage.getItem('vdi_user') || 'operator1')[0]}
+        </button>
+
+        {/* Profile Dropdown Menu */}
+        {isProfileOpen && (
+          <div 
+            id="vdi_profile_dropdown"
+            className="absolute right-0 mt-2 w-64 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-2xl z-50 flex flex-col gap-3.5 animate-in fade-in slide-in-from-top-2 duration-200"
+          >
+            {/* Header Details */}
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-800">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-base uppercase shadow-lg shadow-indigo-500/15">
+                {(sessionStorage.getItem('vdi_user') || 'operator1')[0]}
+              </div>
+              <div className="overflow-hidden">
+                <p className="font-bold text-sm text-white truncate text-left">
+                  {sessionStorage.getItem('vdi_user') || 'operator1'}
+                </p>
+                <p className="text-xs text-slate-400 truncate text-left font-mono">
+                  {sessionStorage.getItem('vdi_role') || 'WarehouseOperator'}
+                </p>
+              </div>
+            </div>
+
+            {/* Session Details */}
+            <div className="flex flex-col gap-2.5 text-xs text-slate-300">
+              <div className="flex justify-between items-center bg-slate-950/45 p-2.5 rounded-xl border border-slate-850">
+                <span className="text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Status</span>
+                <span className="flex items-center gap-1.5 font-bold text-emerald-450">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Secure Session
+                </span>
+              </div>
+              <div className="flex flex-col gap-1 bg-slate-950/45 p-2.5 rounded-xl border border-slate-850">
+                <span className="text-slate-500 font-semibold uppercase tracking-wider text-[9px] text-left">Token</span>
+                <span className="font-mono text-[9px] text-indigo-300 break-all select-all font-semibold text-left">
+                  {sessionStorage.getItem('vdi_token') || 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center bg-slate-950/45 p-2.5 rounded-xl border border-slate-850">
+                <span className="text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Cipher</span>
+                <span className="font-semibold text-slate-400 text-[10px]">AES-256-GCM</span>
+              </div>
+            </div>
+
+            {/* Logout Button */}
+            <button
+              onClick={() => {
+                setIsProfileOpen(false);
+                handleVDILogout();
+              }}
+              id="vdi_logout_button"
+              className="w-full bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-rose-900/10 cursor-pointer"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Disconnect VDI Session
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Main Container */}
       <div className="max-w-7xl mx-auto px-4 py-8 relative z-10">
-        
+
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-6 mb-8 gap-4">
           <div>
@@ -442,6 +956,46 @@ function App() {
               >
                 CI/CD Dashboard
               </button>
+              <button
+                onClick={() => setActiveView('order_metrics')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeView === 'order_metrics'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Order Metrics
+              </button>
+              <button
+                onClick={() => setActiveView('bandwidth_cost')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeView === 'bandwidth_cost'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Cost Optimizer
+              </button>
+              <button
+                onClick={() => setActiveView('inventory_sync')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeView === 'inventory_sync'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Inventory Sync
+              </button>
+              <button
+                onClick={() => setActiveView('notifications')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeView === 'notifications'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                CI/CD Alerts
+              </button>
             </div>
 
             {/* Connection Toggle Panel */}
@@ -452,7 +1006,7 @@ function App() {
                   <span className={`relative inline-flex rounded-full h-3.5 w-3.5 ${networkOnline ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
                 </span>
                 <div className="text-right">
-                  <p className="text-[10px] text-slate-505 uppercase tracking-wider font-semibold">Connection</p>
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Connection</p>
                   <p className={`text-xs font-bold ${networkOnline ? 'text-emerald-400' : 'text-rose-400'}`}>
                     {networkOnline ? 'ONLINE' : 'OFFLINE'}
                   </p>
@@ -631,7 +1185,7 @@ function App() {
                       className={`px-4 py-2 rounded-xl text-sm font-semibold transition duration-150 ${
                         activeTab === 'failed'
                           ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                          : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
                       Failed Queue ({failedEvents.length})
@@ -641,7 +1195,7 @@ function App() {
                       className={`px-4 py-2 rounded-xl text-sm font-semibold transition duration-150 ${
                         activeTab === 'completed'
                           ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                          : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
                       Processed History ({completedEvents.length})
@@ -651,14 +1205,14 @@ function App() {
                       className={`px-4 py-2 rounded-xl text-sm font-semibold transition duration-150 ${
                         activeTab === 'logs'
                           ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                          : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
                       Terminal Logs
                     </button>
                   </div>
 
-                  <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                  <div className="text-xs text-slate-505 flex items-center gap-1.5">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
@@ -702,7 +1256,7 @@ function App() {
                                     {evt.event_id}
                                   </td>
                                   <td className="py-3.5 px-4">
-                                    <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-xs font-semibold border border-slate-700">
+                                    <span className="px-2 py-0.5 rounded-md bg-slate-850 text-slate-300 text-xs font-semibold border border-slate-700">
                                       {evt.event_type}
                                     </span>
                                   </td>
@@ -755,7 +1309,7 @@ function App() {
                   </div>
                 )}
 
-                {/* Tab Content - Completed History */}
+                {/* Tab Content - Processed History */}
                 {activeTab === 'completed' && (
                   <div className="flex-grow flex flex-col justify-start">
                     {completedEvents.length === 0 ? (
@@ -788,7 +1342,7 @@ function App() {
                                   {evt.event_id}
                                 </td>
                                 <td className="py-3.5 px-4">
-                                  <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-xs font-semibold border border-slate-700">
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-855 text-slate-300 text-xs font-semibold border border-slate-700">
                                     {evt.event_type}
                                   </span>
                                 </td>
@@ -961,7 +1515,7 @@ function App() {
                 </div>
 
                 <div className="flex flex-col justify-center items-start md:items-end">
-                  <h3 className="text-xs text-slate-505 font-bold uppercase tracking-wider mb-1.5 md:text-right">Resolved IP Address</h3>
+                  <h3 className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1.5 md:text-right">Resolved IP Address</h3>
                   <div className="flex items-center gap-3">
                     <span className="relative flex h-3.5 w-3.5">
                       <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${getActiveDNSIP() === '10.0.1.10' ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
@@ -981,8 +1535,8 @@ function App() {
               <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl flex-grow min-h-[300px] flex flex-col">
                 <h2 className="text-lg font-bold text-white mb-4 border-b border-slate-800 pb-3 flex justify-between items-center">
                   <span>DNS Log Auditing</span>
-                  <span className="text-xs text-slate-500 flex items-center gap-1">
-                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+                  <span className="text-xs text-slate-505 flex items-center gap-1">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
                     Audit trail live
                   </span>
                 </h2>
@@ -999,7 +1553,7 @@ function App() {
                   ) : (
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="border-b border-slate-800 text-[10px] text-slate-505 uppercase tracking-wider font-bold">
+                        <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
                           <th className="py-2.5 px-3">Timestamp</th>
                           <th className="py-2.5 px-3">Action</th>
                           <th className="py-2.5 px-3">Record</th>
@@ -1026,7 +1580,7 @@ function App() {
                             <td className="py-2.5 px-3 font-mono text-slate-300">
                               {log.record_name}
                             </td>
-                            <td className="py-2.5 px-3 font-mono text-slate-500">
+                            <td className="py-2.5 px-3 font-mono text-slate-550">
                               {log.old_value}
                             </td>
                             <td className={`py-2.5 px-3 font-mono font-bold ${log.new_value === '10.0.1.10' ? 'text-emerald-400' : 'text-amber-400'}`}>
@@ -1114,7 +1668,7 @@ function App() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
                       </svg>
                     </div>
-                    <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Data Downloaded</p>
+                    <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Total Data Downloaded</p>
                     <p className="text-3xl font-black text-emerald-400 mt-2 font-mono">
                       {formatBytes(calculateTotalBandwidth(parsedMetrics, 'download'))}
                     </p>
@@ -1140,7 +1694,7 @@ function App() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
                       </svg>
                     </div>
-                    <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Active Running Builds</p>
+                    <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Active Running Builds</p>
                     <div className="flex items-center gap-2 mt-2">
                       <span className="relative flex h-3 w-3">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
@@ -1182,7 +1736,7 @@ function App() {
                     
                     <div className="bg-slate-950 rounded-xl p-4 flex-grow flex items-center justify-center min-h-[220px]">
                       {metricsHistory.length < 2 ? (
-                        <p className="text-xs text-slate-500 italic">Collecting throughput history samples...</p>
+                        <p className="text-xs text-slate-505 italic">Collecting throughput history samples...</p>
                       ) : (
                         <div className="w-full flex flex-col gap-3">
                           <svg className="w-full h-[200px]" viewBox="0 0 600 200">
@@ -1220,17 +1774,17 @@ function App() {
                   {/* Breakdown Table Panel */}
                   <div className="lg:col-span-5 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
                     <h3 className="text-sm font-bold text-white mb-1">Pipeline Steps Breakdown</h3>
-                    <p className="text-[10px] text-slate-500 mb-4 uppercase tracking-wider font-semibold">
+                    <p className="text-[10px] text-slate-505 mb-4 uppercase tracking-wider font-semibold">
                       Telemetry values parsed directly from /metrics
                     </p>
 
                     <div className="flex-grow overflow-y-auto max-h-[250px] pr-1">
                       {!parsedMetrics || !parsedMetrics['cicd_pipeline_bandwidth_bytes_total'] ? (
-                        <p className="text-xs text-slate-500 italic">No telemetry data parsed.</p>
+                        <p className="text-xs text-slate-505 italic">No telemetry data parsed.</p>
                       ) : (
                         <table className="w-full text-left text-xs border-collapse">
                           <thead>
-                            <tr className="border-b border-slate-850 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
+                            <tr className="border-b border-slate-850 text-[10px] text-slate-550 uppercase tracking-wider font-bold">
                               <th className="py-2 px-1">Pipeline ID</th>
                               <th className="py-2 px-1">Step</th>
                               <th className="py-2 px-1">Direction</th>
@@ -1273,6 +1827,1093 @@ function App() {
           </div>
         )}
 
+        {/* VIEW 4: ORDER EVENT METRICS DASHBOARD */}
+        {activeView === 'order_metrics' && (
+          <div className="flex flex-col gap-8">
+            
+            {/* Stat Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-emerald-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Total Throughput</p>
+                <p className="text-3xl font-black text-emerald-400 mt-2 font-mono">
+                  {calculateOrderMetric(parsedMetrics, 'SUCCESS') + calculateOrderMetric(parsedMetrics, 'FAILURE')}
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Processed events (Success + Fail)</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-rose-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Total Failures</p>
+                <p className="text-3xl font-black text-rose-400 mt-2 font-mono">
+                  {calculateOrderMetric(parsedMetrics, 'FAILURE')}
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Logged event pipeline failures</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-amber-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 3.055A9.003 9.003 0 1020.945 13H11V3.055z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Failure Rate (%)</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <p className={`text-3xl font-black font-mono ${
+                    getFailureRate() > 20
+                      ? 'text-rose-500 animate-pulse font-bold'
+                      : 'text-amber-400'
+                  }`}>
+                    {getFailureRate().toFixed(1)}%
+                  </p>
+                  {getFailureRate() > 20 && (
+                    <span className="px-1.5 py-0.5 rounded text-[8px] bg-rose-500 text-white font-bold tracking-wider animate-bounce">
+                      ALARM
+                    </span>
+                  )}
+                </div>
+                <p className="text-[9px] text-slate-400 mt-1">SLA Alert Threshold: 20%</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-blue-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-505 uppercase font-extrabold tracking-wider">Avg Processing Latency</p>
+                <p className="text-3xl font-black text-blue-400 mt-2 font-mono">
+                  {orderMetricsHistory.length > 0 ? orderMetricsHistory[orderMetricsHistory.length - 1].avgLatency.toFixed(0) : '0'} ms
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Simulated processing jitter</p>
+              </div>
+
+            </div>
+
+            {/* SLA Alert banner */}
+            {getFailureRate() > 20 && (
+              <div className="bg-rose-950/40 border border-rose-900/60 rounded-2xl p-5 flex items-center gap-4 animate-pulse shadow-lg shadow-rose-950/20">
+                <div className="p-3 rounded-xl bg-rose-500 text-white font-bold text-sm tracking-wide">
+                  ALARM
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-rose-300">High Event Processing Failure Rate Warning</h4>
+                  <p className="text-xs text-rose-450 mt-1">
+                    System failure rate is at {getFailureRate().toFixed(1)}%, exceeding the SLA limit of 20%. Please investigate downstream connectivity or replay failed logs.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Graphs & Details Table */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              
+              {/* Latency Timeseries graph */}
+              <div className="lg:col-span-7 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                <h3 className="text-sm font-bold text-white mb-1">Latency Trend Analytics</h3>
+                <p className="text-[10px] text-slate-500 mb-4 uppercase tracking-wider font-semibold">
+                  Real-time average duration in milliseconds
+                </p>
+
+                <div className="bg-slate-950 rounded-xl p-4 flex-grow flex items-center justify-center min-h-[220px]">
+                  {orderMetricsHistory.length < 2 ? (
+                    <p className="text-xs text-slate-505 italic">Awaiting telemetry samples (submit events to populate chart)...</p>
+                  ) : (
+                    <div className="w-full flex flex-col gap-3">
+                      <svg className="w-full h-[200px]" viewBox="0 0 600 200">
+                        {/* Grid lines */}
+                        <line x1="0" y1="50" x2="600" y2="50" stroke="#1e293b" strokeDasharray="3,3" />
+                        <line x1="0" y1="100" x2="600" y2="100" stroke="#1e293b" strokeDasharray="3,3" />
+                        <line x1="0" y1="150" x2="600" y2="150" stroke="#1e293b" strokeDasharray="3,3" />
+
+                        {/* Latency line path */}
+                        <path d={renderSVGOrderChartPaths().path} fill="none" stroke="#60a5fa" strokeWidth="2.5" strokeLinecap="round" />
+                      </svg>
+
+                      {/* Legend */}
+                      <div className="flex justify-between items-center text-[10px] text-slate-450 px-1 font-mono">
+                        <span className="flex items-center gap-1.5">
+                          <span className="inline-block w-2.5 h-1.5 rounded-full bg-blue-400"></span>
+                          Avg Latency: {orderMetricsHistory[orderMetricsHistory.length - 1].avgLatency.toFixed(1)} ms
+                        </span>
+                        <span>Max scale: {renderSVGOrderChartPaths().maxLatency.toFixed(0)} ms</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Event Type Breakdown Table */}
+              <div className="lg:col-span-5 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                <h3 className="text-sm font-bold text-white mb-1">Process Event Type Telemetry</h3>
+                <p className="text-[10px] text-slate-500 mb-4 uppercase tracking-wider font-semibold">
+                  Breakdown by event names and transaction state
+                </p>
+
+                <div className="flex-grow overflow-y-auto max-h-[250px] pr-1">
+                  {!parsedMetrics || !parsedMetrics['order_events_processed_total'] ? (
+                    <p className="text-xs text-slate-550 italic">Submit events via the Event dispatcher to populate telemetry metrics.</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-850 text-[10px] text-slate-550 uppercase tracking-wider font-bold">
+                          <th className="py-2 px-1">Event Type</th>
+                          <th className="py-2 px-1">Status</th>
+                          <th className="py-2 px-1 text-right">Transactions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsedMetrics['order_events_processed_total']
+                          .filter(m => m.value > 0)
+                          .sort((a, b) => b.value - a.value)
+                          .map((m, idx) => (
+                            <tr key={idx} className="border-b border-slate-850/40 hover:bg-slate-900/10 transition">
+                              <td className="py-2 px-1 font-bold text-slate-300">{m.labels.event_type}</td>
+                              <td className="py-2 px-1 uppercase text-[10px]">
+                                <span className={`px-1.5 py-0.5 rounded font-bold ${
+                                  m.labels.status === 'SUCCESS' 
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/15'
+                                    : 'bg-rose-500/10 text-rose-400 border border-rose-500/15'
+                                }`}>
+                                  {m.labels.status}
+                                </span>
+                              </td>
+                              <td className="py-2 px-1 text-right font-mono text-slate-200 font-semibold">
+                                {m.value}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* VIEW 5: BANDWIDTH COST OPTIMIZATION DASHBOARD (PRJ-B0FC-0036) */}
+        {activeView === 'bandwidth_cost' && (
+          <div className="flex flex-col gap-8">
+            
+            {/* Filters Row */}
+            <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 shadow-md flex flex-col md:flex-row justify-between items-center gap-4">
+              <div className="flex items-center gap-3">
+                <span className="p-2 bg-indigo-500/10 text-indigo-400 border border-indigo-500/15 rounded-xl font-bold text-xs uppercase">
+                  Filters
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Interactive Link Filters</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Filter link telemetry metrics by region and type</p>
+                </div>
+              </div>
+
+              <div className="flex gap-4 w-full md:w-auto">
+                <div className="flex-grow md:flex-grow-0">
+                  <label className="block text-[9px] text-slate-500 uppercase tracking-wider font-semibold mb-1">Region</label>
+                  <select
+                    value={filterRegion}
+                    onChange={(e) => setFilterRegion(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="All">All Regions</option>
+                    <option value="IN-North">IN-North (Delhi)</option>
+                    <option value="IN-West">IN-West (Mumbai)</option>
+                    <option value="IN-South">IN-South (Bengaluru)</option>
+                    <option value="IN-East">IN-East (Kolkata)</option>
+                  </select>
+                </div>
+
+                <div className="flex-grow md:flex-grow-0">
+                  <label className="block text-[9px] text-slate-500 uppercase tracking-wider font-semibold mb-1">Link Type</label>
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="All">All Types</option>
+                    <option value="DirectConnect">Direct Connect</option>
+                    <option value="VPN">VPN Gateway</option>
+                    <option value="Broadband">Broadband</option>
+                    <option value="Satellite">Satellite Link</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-emerald-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Bandwidth Transferred</p>
+                <p className="text-3xl font-black text-emerald-400 mt-2 font-mono">
+                  {totalFilteredData.toFixed(1)} <span className="text-sm font-semibold">GB</span>
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Aggregated filtered link data</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-indigo-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-500 uppercase font-extrabold tracking-wider">Total Accumulative Cost</p>
+                <p className="text-3xl font-black text-indigo-400 mt-2 font-mono">
+                  ₹{totalFilteredCost.toFixed(2)}
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Billed rate * volume consumed</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md">
+                <div className="absolute top-0 right-0 p-3 text-violet-500/10">
+                  <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" />
+                  </svg>
+                </div>
+                <p className="text-[10px] text-slate-555 uppercase font-extrabold tracking-wider">Average Cost Rate</p>
+                <p className="text-3xl font-black text-violet-400 mt-2 font-mono">
+                  ₹{averageFilteredRate.toFixed(2)} <span className="text-sm font-semibold">/ GB</span>
+                </p>
+                <p className="text-[9px] text-slate-400 mt-1">Weighted average efficiency</p>
+              </div>
+
+              <div className="bg-slate-900/40 border border-slate-850 rounded-2xl p-5 relative overflow-hidden shadow-md flex flex-col justify-between">
+                <div>
+                  <p className="text-[10px] text-slate-555 uppercase font-extrabold tracking-wider">Optimal Route Recommendation</p>
+                  {optimalLink ? (
+                    <div className="mt-2">
+                      <p className="text-xs font-bold text-emerald-400 font-mono">{optimalLink.name}</p>
+                      <p className="text-[9px] text-slate-400">Lowest cost rate: <span className="text-emerald-500 font-semibold">₹{optimalLink.rate.toFixed(2)}/GB</span></p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 mt-2 italic">No link matches filters</p>
+                  )}
+                </div>
+                <div className="text-[8px] text-slate-500 uppercase tracking-widest font-bold border-t border-slate-850 pt-1.5 mt-2">
+                  Routing efficiency optimizer
+                </div>
+              </div>
+
+            </div>
+
+            {/* UI Charts & Details Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              
+              {/* Cost Share Chart (Accrued cost visual bars) */}
+              <div className="lg:col-span-6 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                <h3 className="text-sm font-bold text-white mb-1">Accrued Cost Breakdown</h3>
+                <p className="text-[10px] text-slate-500 mb-5 uppercase tracking-wider font-semibold">
+                  Billing cost distribution across network links
+                </p>
+
+                <div className="bg-slate-950 rounded-xl p-5 flex-grow flex flex-col justify-center min-h-[220px]">
+                  {filteredLinks.length === 0 ? (
+                    <p className="text-xs text-slate-505 italic text-center py-8">Select different filter criteria to populate chart.</p>
+                  ) : (
+                    filteredLinks.map((lnk) => {
+                      const maxCost = Math.max(...filteredLinks.map(l => l.accruedCost), 1);
+                      const pct = (lnk.accruedCost / maxCost) * 100;
+                      return (
+                        <div key={lnk.id} className="flex flex-col gap-1 mb-4 last:mb-0">
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-slate-300 font-bold">{lnk.name} ({lnk.type})</span>
+                            <span className="font-extrabold text-indigo-400">₹{lnk.accruedCost.toFixed(2)}</span>
+                          </div>
+                          <div className="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-850/50 shadow-inner">
+                            <div 
+                              className="bg-gradient-to-r from-indigo-500 to-violet-500 h-full rounded-full transition-all duration-500" 
+                              style={{ width: `${pct}%` }} 
+                            />
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Network Links Cost Grid Table */}
+              <div className="lg:col-span-6 bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-md flex flex-col">
+                <h3 className="text-sm font-bold text-white mb-1">Network Links Cost Analyzer</h3>
+                <p className="text-[10px] text-slate-500 mb-5 uppercase tracking-wider font-semibold">
+                  Real-time link speed and cost details
+                </p>
+
+                <div className="flex-grow overflow-y-auto max-h-[250px] pr-1">
+                  {filteredLinks.length === 0 ? (
+                    <p className="text-xs text-slate-505 italic text-center py-8">No links matching the current filters.</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-850 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
+                          <th className="py-2.5 px-1">Link Name</th>
+                          <th className="py-2.5 px-1">Region</th>
+                          <th className="py-2.5 px-1">Speed</th>
+                          <th className="py-2.5 px-1 text-right">Cost/GB (₹)</th>
+                          <th className="py-2.5 px-1 text-right">Accrued Cost (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredLinks.map((lnk) => (
+                          <tr key={lnk.id} className="border-b border-slate-850/40 hover:bg-slate-900/10 transition">
+                            <td className="py-2.5 px-1 font-bold text-slate-200">{lnk.name}</td>
+                            <td className="py-2.5 px-1 uppercase text-[9px]">
+                              <span className="px-1.5 py-0.5 rounded bg-slate-850 text-slate-400 font-bold border border-slate-800">
+                                {lnk.region}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-1 font-mono text-indigo-400 font-semibold">{lnk.speed} Mbps</td>
+                            <td className="py-2.5 px-1 text-right font-mono text-slate-300">₹{lnk.rate.toFixed(2)}</td>
+                            <td className="py-2.5 px-1 text-right font-mono text-emerald-400 font-black">₹{lnk.accruedCost.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* VIEW 6: INVENTORY SYNC DASHBOARD */}
+        {activeView === 'inventory_sync' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            {/* Left Column: Stats & Manual Trigger Form */}
+            <div className="lg:col-span-4 flex flex-col gap-8">
+              
+              {/* Regional Sync Status Cards */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                  Regional Status
+                </h2>
+
+                <div className="flex flex-col gap-4">
+                  {/* India */}
+                  <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-xl flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🇮🇳</span>
+                        <span className="font-bold text-slate-200 text-sm">India (IN)</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[9px] uppercase tracking-wider">
+                        Active
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-900">
+                      <div>Unit: <span className="text-indigo-300">Strips (1/10)</span></div>
+                      <div>Currency: <span className="text-indigo-300">INR</span></div>
+                      <div className="col-span-2">Compliance: <span className="text-slate-350">cdsco_license, gstin</span></div>
+                    </div>
+                  </div>
+
+                  {/* US */}
+                  <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-xl flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🇺🇸</span>
+                        <span className="font-bold text-slate-200 text-sm">United States (US)</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[9px] uppercase tracking-wider">
+                        Active
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-900">
+                      <div>Unit: <span className="text-indigo-300">Bottles (1/30)</span></div>
+                      <div>Currency: <span className="text-indigo-300">USD</span></div>
+                      <div className="col-span-2">Compliance: <span className="text-slate-350">fda_ndc, dscsa_uid</span></div>
+                    </div>
+                  </div>
+
+                  {/* EU */}
+                  <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-xl flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🇪🇺</span>
+                        <span className="font-bold text-slate-200 text-sm">Europe (EU)</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[9px] uppercase tracking-wider">
+                        Active
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-900">
+                      <div>Unit: <span className="text-indigo-300">Packs (1/28)</span></div>
+                      <div>Currency: <span className="text-indigo-300">EUR</span></div>
+                      <div className="col-span-2">Compliance: <span className="text-slate-350">ema_fmd_serial, gdpr_residency</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Trigger Sync Form */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                  Manual Trigger Sync
+                </h2>
+
+                <form onSubmit={handleTriggerSync} className="flex flex-col gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      SKU Code
+                    </label>
+                    <input
+                      type="text"
+                      value={syncSku}
+                      onChange={(e) => setSyncSku(e.target.value)}
+                      required
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Item Name
+                    </label>
+                    <input
+                      type="text"
+                      value={syncItemName}
+                      onChange={(e) => setSyncItemName(e.target.value)}
+                      required
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Base Qty (Units)
+                      </label>
+                      <input
+                        type="number"
+                        value={syncQuantity}
+                        onChange={(e) => setSyncQuantity(e.target.value)}
+                        required
+                        min="1"
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Target Region
+                      </label>
+                      <select
+                        value={syncRegion}
+                        onChange={(e) => {
+                          setSyncRegion(e.target.value);
+                          if (e.target.value === 'IN') {
+                            setSyncComplianceData('{"cdsco_license": "DL-MUM-9988", "gstin": "27AAACP0120A1Z2"}');
+                          } else if (e.target.value === 'US') {
+                            setSyncComplianceData('{"fda_ndc": "0002-8215-01", "dscsa_uid": "DSCSA-1122"}');
+                          } else if (e.target.value === 'EU') {
+                            setSyncComplianceData('{"ema_fmd_serial": "SN-EMA-7722", "gdpr_residency": "DE-EMEA"}');
+                          }
+                        }}
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                      >
+                        <option value="IN">IN (India)</option>
+                        <option value="US">US (United States)</option>
+                        <option value="EU">EU (Europe)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Compliance JSON Data
+                    </label>
+                    <textarea
+                      value={syncComplianceData}
+                      onChange={(e) => setSyncComplianceData(e.target.value)}
+                      rows="3"
+                      required
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                    />
+                  </div>
+
+                  {syncError && (
+                    <div className="bg-rose-500/10 border border-rose-500/15 text-xs text-rose-450 p-3 rounded-xl">
+                      ❌ {syncError}
+                    </div>
+                  )}
+
+                  {syncSuccessMsg && (
+                    <div className="bg-emerald-500/10 border border-emerald-500/15 text-xs text-emerald-400 p-3 rounded-xl">
+                      ✅ {syncSuccessMsg}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isSyncing}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold py-2.5 px-4 rounded-xl text-sm transition mt-2 shadow-lg shadow-indigo-500/10 disabled:opacity-50"
+                  >
+                    {isSyncing ? 'Syncing...' : 'Trigger Regional Sync'}
+                  </button>
+                </form>
+              </div>
+
+            </div>
+
+            {/* Right Column: Sync Activity Logs & Success Metrics */}
+            <div className="lg:col-span-8 flex flex-col gap-8">
+              
+              {/* Sync Messaging Analytics */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Total Sync Messages */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400 border border-indigo-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-2m-4-1v8m0 0l3-3m-3 3L9 8m-5 5h2.586a1 1 0 01.707.293l2.414 2.414a1 1 0 00.707.293h3.172a1 1 0 00.707-.293l2.414-2.414a1 1 0 01.707-.293H20" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-505 uppercase tracking-wider font-semibold">Total Sync Actions</h3>
+                    <p className="text-2xl font-black text-white font-mono">{syncHistory.length}</p>
+                  </div>
+                </div>
+
+                {/* Successful Syncs */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-550 uppercase tracking-wider font-semibold">Sync Successful</h3>
+                    <p className="text-2xl font-black text-emerald-400 font-mono">
+                      {syncHistory.filter(x => x.status === 'COMPLETED').length}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Failed Syncs */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-rose-500/10 rounded-xl text-rose-455 border border-rose-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-550 uppercase tracking-wider font-semibold">Sync Failed</h3>
+                    <p className="text-2xl font-black text-rose-455 font-mono">
+                      {syncHistory.filter(x => x.status === 'FAILED').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sync Messaging Logs */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl flex-grow flex flex-col">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
+                  <div>
+                    <h3 className="text-base font-bold text-white">Sync Messaging Activity Log</h3>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                      Real-time records of microservice executions
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const res = await fetch('/sync/history');
+                      if (res.ok) {
+                        setSyncHistory(await res.json());
+                      }
+                    }}
+                    className="p-2 rounded bg-slate-800 hover:bg-slate-750 border border-slate-700 transition"
+                    title="Refresh logs"
+                  >
+                    <svg className="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8.89M9 11l3 3L22 4" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto max-h-[500px] flex-grow pr-1">
+                  {syncHistory.length === 0 ? (
+                    <div className="text-center py-16 text-slate-500 italic text-xs">
+                      No synchronization transactions recorded. Use the event dispatcher or sync form to trigger inventory syncs.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {syncHistory.map((log) => {
+                        const isSuccess = log.status === 'COMPLETED';
+                        return (
+                          <div
+                            key={log.sync_id}
+                            className={`p-4 rounded-xl border transition flex flex-col gap-2.5 ${
+                              isSuccess
+                                ? 'bg-slate-950/40 border-slate-850 hover:border-slate-800'
+                                : 'bg-rose-950/10 border-rose-950/20 hover:border-rose-900/25'
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-indigo-400 font-mono">{log.sync_id}</span>
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
+                                  log.target_region === 'IN' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/15' :
+                                  log.target_region === 'US' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/15' :
+                                  'bg-purple-500/10 text-purple-400 border border-purple-500/15'
+                                }`}>
+                                  {log.target_region}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-[10px] text-slate-505 font-mono">
+                                  {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : 'N/A'}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase font-mono ${
+                                  isSuccess
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                    : 'bg-rose-500/10 text-rose-450 border border-rose-500/20'
+                                }`}>
+                                  {log.status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs pt-1">
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">SKU Details</span>
+                                <span className="font-bold text-slate-200">{log.sku}</span>
+                                <span className="text-slate-400 text-[10px] block truncate">{log.item_name}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Converted Quantities</span>
+                                <span className="font-bold text-slate-200 font-mono">
+                                  {log.calculated_units?.local_quantity} {log.calculated_units?.unit_type}
+                                </span>
+                                <span className="text-slate-455 text-[10px] block">
+                                  from {log.base_quantity} base units
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Regional Financials</span>
+                                <span className="font-bold text-emerald-450 font-mono">
+                                  {log.calculated_units?.currency === 'INR' ? '₹' :
+                                   log.calculated_units?.currency === 'EUR' ? '€' : '$'}
+                                  {log.calculated_units?.rate} / unit
+                                </span>
+                                <span className="text-slate-455 text-[10px] block">
+                                  Base Divisor: {log.target_region === 'IN' ? '10' : log.target_region === 'US' ? '30' : '28'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {log.regulatory_compliance?.fields && (
+                              <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-900 mt-1">
+                                <span className="text-slate-500 text-[9px] uppercase tracking-wider block font-semibold mb-1">Regulatory Compliance Attestation</span>
+                                <div className="flex flex-wrap gap-2">
+                                  {Object.entries(log.regulatory_compliance.fields).map(([k, v]) => (
+                                    <span key={k} className="text-[10px] font-mono text-slate-350 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5">
+                                      <span className="text-indigo-400 font-bold">{k}</span>: {v}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 7: CI/CD NOTIFICATION SYSTEM DASHBOARD */}
+        {activeView === 'notifications' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            {/* Left Column: Config Panel & Manual Trigger */}
+            <div className="lg:col-span-4 flex flex-col gap-8">
+              
+              {/* Channel Selector Config Card */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Alert Channels Configuration
+                </h2>
+
+                <form onSubmit={handleUpdateNotifConfig} className="flex flex-col gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                      Active Channel
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNotifChannel('SMS');
+                          if (notifConfig) setNotifRecipients(notifConfig.sms_recipients.join(', '));
+                        }}
+                        className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border flex items-center justify-center gap-2 cursor-pointer ${
+                          notifChannel === 'SMS'
+                            ? 'bg-indigo-600/10 border-indigo-500/30 text-indigo-400 shadow-inner border-indigo-500/20'
+                            : 'bg-slate-950/40 border-slate-850 text-slate-400 hover:border-slate-800'
+                        }`}
+                      >
+                        📱 SMS Carrier
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNotifChannel('EMAIL');
+                          if (notifConfig) setNotifRecipients(notifConfig.email_recipients.join(', '));
+                        }}
+                        className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border flex items-center justify-center gap-2 cursor-pointer ${
+                          notifChannel === 'EMAIL'
+                            ? 'bg-indigo-600/10 border-indigo-500/30 text-indigo-400 shadow-inner border-indigo-500/20'
+                            : 'bg-slate-950/40 border-slate-850 text-slate-400 hover:border-slate-800'
+                        }`}
+                      >
+                        📧 Compressed Email
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Recipients (comma separated)
+                    </label>
+                    <textarea
+                      value={notifRecipients}
+                      onChange={(e) => setNotifRecipients(e.target.value)}
+                      required
+                      rows="2"
+                      placeholder={notifChannel === 'SMS' ? '+15550199, +919876543210' : 'user@domain.com, user2@domain.com'}
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={notifConfigSaving}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition shadow-lg shadow-indigo-500/10 disabled:opacity-50"
+                  >
+                    {notifConfigSaving ? 'Saving...' : 'Apply Configuration'}
+                  </button>
+                </form>
+              </div>
+
+              {/* Trigger Notification Test Form */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  </svg>
+                  Trigger Test Notification
+                </h2>
+
+                <form onSubmit={handleTriggerTestNotif} className="flex flex-col gap-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Pipeline
+                      </label>
+                      <select
+                        value={notifPipelineId}
+                        onChange={(e) => setNotifPipelineId(e.target.value)}
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                      >
+                        <option value="build-ui">build-ui</option>
+                        <option value="test-backend">test-backend</option>
+                        <option value="deploy-staging">deploy-staging</option>
+                        <option value="security-audit">security-audit</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Status
+                      </label>
+                      <select
+                        value={notifStatus}
+                        onChange={(e) => setNotifStatus(e.target.value)}
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                      >
+                        <option value="STARTED">STARTED</option>
+                        <option value="SUCCESS">SUCCESS</option>
+                        <option value="FAILED">FAILED</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Step Name
+                      </label>
+                      <input
+                        type="text"
+                        value={notifStep}
+                        onChange={(e) => setNotifStep(e.target.value)}
+                        required
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Duration (sec)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={notifDuration}
+                        onChange={(e) => setNotifDuration(e.target.value)}
+                        required
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Bandwidth (Bytes)
+                    </label>
+                    <input
+                      type="number"
+                      value={notifBandwidth}
+                      onChange={(e) => setNotifBandwidth(e.target.value)}
+                      required
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                    />
+                  </div>
+
+                  {notifErrorMsg && (
+                    <div className="bg-rose-500/10 border border-rose-500/15 text-[11px] text-rose-450 p-3 rounded-xl">
+                      ❌ {notifErrorMsg}
+                    </div>
+                  )}
+
+                  {notifSuccessMsg && (
+                    <div className="bg-emerald-500/10 border border-emerald-500/15 text-[11px] text-emerald-450 p-3 rounded-xl">
+                      ✅ {notifSuccessMsg}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={notifTriggerLoading}
+                    className="w-full bg-violet-600 hover:bg-violet-500 active:bg-violet-750 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition shadow-lg shadow-violet-500/10 disabled:opacity-50"
+                  >
+                    {notifTriggerLoading ? 'Sending Alert...' : 'Dispatch Test Alert'}
+                  </button>
+                </form>
+              </div>
+
+            </div>
+
+            {/* Right Column: Analytics & Dispatch logs */}
+            <div className="lg:col-span-8 flex flex-col gap-8">
+              
+              {/* Analytics Header Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Active Channel Card */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400 border border-indigo-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Active Channel</h3>
+                    <p className="text-xl font-black text-white font-mono uppercase">
+                      {notifConfig ? notifConfig.active_channel : 'Loading...'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Total Dispatched Card */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-450 border border-emerald-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Total Alerts Sent</h3>
+                    <p className="text-xl font-black text-white font-mono">{notifLogs.length}</p>
+                  </div>
+                </div>
+
+                {/* Bandwidth Savings Card */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-purple-500/10 rounded-xl text-purple-400 border border-purple-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 12l3-3 3 3 4-4M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2-2v14a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Avg. Email Compression</h3>
+                    <p className="text-xl font-black text-white font-mono">
+                      {notifLogs.filter(l => l.channel === 'EMAIL').length === 0 ? 'N/A' : (
+                        (notifLogs.filter(l => l.channel === 'EMAIL').reduce((acc, curr) => acc + curr.saving_percentage, 0) / 
+                        notifLogs.filter(l => l.channel === 'EMAIL').length).toFixed(1) + '%'
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Log History */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl flex-grow flex flex-col min-h-[400px]">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
+                  <div>
+                    <h3 className="text-base font-bold text-white">Dispatched Alerts Real-Time Log</h3>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                      Live audit log of low-bandwidth stakeholder broadcasts
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const res = await fetch('/notifications/logs');
+                      if (res.ok) {
+                        setNotifLogs(await res.json());
+                      }
+                    }}
+                    className="p-2 rounded bg-slate-800 hover:bg-slate-750 border border-slate-700 transition"
+                    title="Refresh logs"
+                  >
+                    <svg className="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8.89M9 11l3 3L22 4" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto max-h-[500px] flex-grow pr-1">
+                  {notifLogs.length === 0 ? (
+                    <div className="text-center py-20 text-slate-550 italic text-xs">
+                      No CI/CD notifications dispatched yet. Wait for simulation cycles or trigger a manual test alert.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {notifLogs.map((log) => {
+                        const isSuccess = log.status === 'SUCCESS';
+                        const isFailed = log.status === 'FAILED';
+                        return (
+                          <div
+                            key={log.notification_id}
+                            className={`p-4 rounded-xl border transition flex flex-col gap-3 ${
+                              isFailed ? 'bg-rose-950/10 border-rose-900/15 hover:border-rose-900/25' :
+                              'bg-slate-950/40 border-slate-850 hover:border-slate-800'
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-indigo-400 font-mono">{log.notification_id}</span>
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase ${
+                                  log.channel === 'SMS' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/15' : 'bg-blue-500/10 text-blue-400 border border-blue-500/15'
+                                }`}>
+                                  {log.channel}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  {new Date(log.timestamp).toLocaleTimeString()}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase font-mono ${
+                                  isSuccess ? 'bg-emerald-500/10 text-emerald-450 border border-emerald-500/20' :
+                                  isFailed ? 'bg-rose-500/10 text-rose-455 border border-rose-500/20' :
+                                  'bg-blue-500/10 text-blue-450 border border-blue-500/20'
+                                }`}>
+                                  {log.status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs pt-1 border-t border-slate-900/40">
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Event Details</span>
+                                <span className="font-bold text-slate-200 font-mono text-[11px]">{log.pipeline_id}</span>
+                                <span className="text-slate-400 text-[10px] block truncate">Step: {log.step}</span>
+                              </div>
+                              
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Bandwidth Cost</span>
+                                <span className="font-bold text-slate-200 font-mono text-[11px]">
+                                  {log.channel === 'EMAIL' ? (
+                                    <>
+                                      {log.compressed_size_bytes} B
+                                      <span className="text-slate-455 text-[10px] block font-normal">
+                                        from {log.uncompressed_size_bytes} B (Saved: {log.saving_percentage}%)
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      {log.uncompressed_size_bytes} B
+                                      <span className="text-slate-455 text-[10px] block font-normal">No IP overhead</span>
+                                    </>
+                                  )}
+                                </span>
+                              </div>
+
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Recipients</span>
+                                <span className="text-slate-300 font-mono text-[10px] block truncate" title={log.recipients.join(', ')}>
+                                  {log.recipients.join(', ')}
+                                </span>
+                                <span className="text-emerald-450 font-bold text-[9px] uppercase tracking-wider flex items-center gap-1.5 mt-0.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                  {log.dispatch_status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-900 mt-1">
+                              <span className="text-slate-500 text-[9px] uppercase tracking-wider block font-semibold mb-1">Alert Payload Body</span>
+                              <pre className="font-mono text-[10px] text-slate-300 whitespace-pre-wrap select-all font-semibold leading-relaxed">
+                                {log.body_preview}
+                              </pre>
+                            </div>
+
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

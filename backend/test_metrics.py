@@ -42,5 +42,40 @@ class TestMetricsRegistry(unittest.TestCase):
         
         self.assertEqual(val_after, 3)
 
+    def test_order_events_metrics(self):
+        from app.services.failed_event_service import process_order_event, set_network_status
+        
+        set_network_status(True)
+        
+        before_success = REGISTRY.get_sample_value(
+            'order_events_processed_total',
+            {'event_type': 'OrderCreated', 'status': 'SUCCESS'}
+        ) or 0
+        
+        process_order_event('EVT-TEST-1', 'OrderCreated', {'simulate_failure': False})
+        
+        after_success = REGISTRY.get_sample_value(
+            'order_events_processed_total',
+            {'event_type': 'OrderCreated', 'status': 'SUCCESS'}
+        )
+        
+        self.assertEqual(after_success - before_success, 1)
+        
+        # Test failure tracking
+        before_failure = REGISTRY.get_sample_value(
+            'order_events_processed_total',
+            {'event_type': 'OrderCreated', 'status': 'FAILURE'}
+        ) or 0
+        
+        with self.assertRaises(Exception):
+            process_order_event('EVT-TEST-2', 'OrderCreated', {'simulate_failure': True})
+            
+        after_failure = REGISTRY.get_sample_value(
+            'order_events_processed_total',
+            {'event_type': 'OrderCreated', 'status': 'FAILURE'}
+        )
+        
+        self.assertEqual(after_failure - before_failure, 1)
+
 if __name__ == "__main__":
     unittest.main()
