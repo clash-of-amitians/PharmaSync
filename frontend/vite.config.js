@@ -33,6 +33,10 @@ export default defineConfig({
       '/auth': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+      },
+      '/sync': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
       }
     }
   }

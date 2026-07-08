@@ -33,4 +33,7 @@ class Settings:
     # DNS Provider API Integration (AWS Route 53)
     ROUTE53_HOSTED_ZONE_ID: str | None = os.getenv("ROUTE53_HOSTED_ZONE_ID", None)
 
+    # Inventory Sync Service Configuration
+    INVENTORY_SYNC_SERVICE_URL: str = os.getenv("INVENTORY_SYNC_SERVICE_URL", "http://localhost:8001")
+
 settings = Settings()

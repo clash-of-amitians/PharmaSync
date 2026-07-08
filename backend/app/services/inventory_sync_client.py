@@ -1,7 +1,6 @@
 import httpx
 import logging
-
-INVENTORY_SYNC_SERVICE_URL = "http://localhost:8001"
+from app.core.config import settings
 
 def trigger_regional_inventory_sync(sku: str, item_name: str, quantity: int, region: str, compliance_data: dict = None) -> dict:
     """
@@ -16,7 +15,7 @@ def trigger_regional_inventory_sync(sku: str, item_name: str, quantity: int, reg
             "compliance_data": compliance_data
         }
         # Call the standalone microservice endpoint
-        response = httpx.post(f"{INVENTORY_SYNC_SERVICE_URL}/sync/trigger", json=payload, timeout=5.0)
+        response = httpx.post(f"{settings.INVENTORY_SYNC_SERVICE_URL}/sync/trigger", json=payload, timeout=5.0)
         if response.status_code == 201:
             return response.json()
         else:

@@ -80,6 +80,18 @@ function App() {
   const [vdiPassword, setVdiPassword] = useState('');
   const [vdiAuthError, setVdiAuthError] = useState('');
   const [vdiLoading, setVdiLoading] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+
+  // Inventory Sync Dashboard States
+  const [syncHistory, setSyncHistory] = useState([]);
+  const [syncSku, setSyncSku] = useState('SKU-AMOX-500');
+  const [syncItemName, setSyncItemName] = useState('Amoxicillin 500mg');
+  const [syncQuantity, setSyncQuantity] = useState(100);
+  const [syncRegion, setSyncRegion] = useState('IN');
+  const [syncComplianceData, setSyncComplianceData] = useState('{"cdsco_license": "DL-MUM-9988", "gstin": "27AAACP0120A1Z2"}');
+  const [syncError, setSyncError] = useState('');
+  const [syncSuccessMsg, setSyncSuccessMsg] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const handleVDILogin = async (e) => {
     e.preventDefault();
@@ -157,14 +169,17 @@ function App() {
   };
 
   useEffect(() => {
-    generateRandomEventId();
-    addTerminalLog("System Initialized. Control Center active.");
+    const timer = setTimeout(() => {
+      generateRandomEventId();
+      addTerminalLog("System Initialized. Control Center active.");
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
-  const addTerminalLog = (msg) => {
+  function addTerminalLog(msg) {
     const time = new Date().toLocaleTimeString();
     setTerminalLogs((prev) => [`[${time}] ${msg}`, ...prev.slice(0, 49)]);
-  };
+  }
 
   // Fetch all backend stats (event queue, DNS, and Prometheus metrics)
   const fetchBackendData = async () => {
@@ -264,6 +279,17 @@ function App() {
         const bandwidthData = await bandwidthRes.json();
         setNetworkLinks(bandwidthData.links || []);
       }
+
+      // 8. Fetch Sync History from Standalone Microservice
+      try {
+        const syncRes = await fetch('/sync/history');
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          setSyncHistory(syncData || []);
+        }
+      } catch (syncErr) {
+        console.error("Error fetching sync history:", syncErr);
+      }
     } catch (err) {
       console.error("API Polling Error:", err);
       // Gracefully handle connectivity errors
@@ -276,9 +302,15 @@ function App() {
 
   // Poll for updates every 3 seconds
   useEffect(() => {
-    fetchBackendData();
+    const timer = setTimeout(() => {
+      fetchBackendData();
+    }, 0);
     const interval = setInterval(fetchBackendData, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [networkOnline]);
 
   // Auth Handler
@@ -329,6 +361,61 @@ function App() {
       addTerminalLog(`❌ Network Toggle Error: ${err.message}`);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Trigger Inventory Sync microservice
+  const handleTriggerSync = async (e) => {
+    e.preventDefault();
+    setIsSyncing(true);
+    setSyncError('');
+    setSyncSuccessMsg('');
+    
+    let parsedCompliance = {};
+    try {
+      if (syncComplianceData.trim()) {
+        parsedCompliance = JSON.parse(syncComplianceData);
+      }
+    } catch {
+      setSyncError("Invalid JSON in compliance data. Format must be valid JSON: e.g. {\"key\": \"value\"}");
+      setIsSyncing(false);
+      return;
+    }
+    
+    try {
+      const response = await fetch('/sync/trigger', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sku: syncSku,
+          item_name: syncItemName,
+          base_quantity: parseInt(syncQuantity, 10),
+          target_region: syncRegion,
+          compliance_data: parsedCompliance
+        })
+      });
+      
+      const data = await response.json();
+      if (response.status === 201) {
+        setSyncSuccessMsg(`Sync operation ${data.sync_id} triggered successfully!`);
+        addTerminalLog(`📦 Inventory Sync Triggered: SKU ${syncSku} for region ${syncRegion}`);
+        // Fetch updated sync history
+        const syncRes = await fetch('/sync/history');
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          setSyncHistory(syncData || []);
+        }
+      } else {
+        setSyncError(data.detail || "Error triggering sync. Check fields.");
+        addTerminalLog(`⚠️ Sync Failed: ${data.detail || 'Validation Error'}`);
+      }
+    } catch (err) {
+      setSyncError("Network error: Could not reach inventory sync microservice.");
+      addTerminalLog(`⚠️ Sync Network Error: ${err.message}`);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -434,12 +521,12 @@ function App() {
   };
 
   // CI/CD Telemetry Helpers
-  const calculateTotalBandwidth = (metrics, direction) => {
+  function calculateTotalBandwidth(metrics, direction) {
     if (!metrics || !metrics['cicd_pipeline_bandwidth_bytes_total']) return 0;
     return metrics['cicd_pipeline_bandwidth_bytes_total']
       .filter(m => m.labels.direction === direction)
       .reduce((sum, m) => sum + m.value, 0);
-  };
+  }
 
   const getActivePipelines = () => {
     if (!parsedMetrics || !parsedMetrics['cicd_pipeline_active_builds']) return 0;
@@ -455,12 +542,12 @@ function App() {
   };
 
   // Order Events Telemetry Helpers
-  const calculateOrderMetric = (metrics, status) => {
+  function calculateOrderMetric(metrics, status) {
     if (!metrics || !metrics['order_events_processed_total']) return 0;
     return metrics['order_events_processed_total']
       .filter(m => m.labels.status === status)
       .reduce((sum, m) => sum + m.value, 0);
-  };
+  }
 
   // SVG Chart rendering computations for CI/CD
   const renderSVGChartPaths = () => {
@@ -620,26 +707,79 @@ function App() {
       <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-indigo-500/10 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-5%] w-[500px] h-[500px] rounded-full bg-purple-500/5 blur-[120px] pointer-events-none" />
 
+      {/* VDI Session Info & Logout (PRJ-B0FC-0057) - Top Right Corner Profile Tab */}
+      <div className="fixed top-6 right-6 md:right-8 z-40">
+        <button
+          onClick={() => setIsProfileOpen(!isProfileOpen)}
+          id="vdi_profile_tab"
+          className="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 text-white hover:scale-105 active:scale-95 transition shadow-lg shadow-indigo-500/15 cursor-pointer flex items-center justify-center font-bold text-sm uppercase focus:outline-none border border-indigo-400/20"
+          title="VDI Session Profile"
+        >
+          {(sessionStorage.getItem('vdi_user') || 'operator1')[0]}
+        </button>
+
+        {/* Profile Dropdown Menu */}
+        {isProfileOpen && (
+          <div 
+            id="vdi_profile_dropdown"
+            className="absolute right-0 mt-2 w-64 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-2xl z-50 flex flex-col gap-3.5 animate-in fade-in slide-in-from-top-2 duration-200"
+          >
+            {/* Header Details */}
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-800">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-base uppercase shadow-lg shadow-indigo-500/15">
+                {(sessionStorage.getItem('vdi_user') || 'operator1')[0]}
+              </div>
+              <div className="overflow-hidden">
+                <p className="font-bold text-sm text-white truncate text-left">
+                  {sessionStorage.getItem('vdi_user') || 'operator1'}
+                </p>
+                <p className="text-xs text-slate-400 truncate text-left font-mono">
+                  {sessionStorage.getItem('vdi_role') || 'WarehouseOperator'}
+                </p>
+              </div>
+            </div>
+
+            {/* Session Details */}
+            <div className="flex flex-col gap-2.5 text-xs text-slate-300">
+              <div className="flex justify-between items-center bg-slate-950/45 p-2.5 rounded-xl border border-slate-850">
+                <span className="text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Status</span>
+                <span className="flex items-center gap-1.5 font-bold text-emerald-450">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Secure Session
+                </span>
+              </div>
+              <div className="flex flex-col gap-1 bg-slate-950/45 p-2.5 rounded-xl border border-slate-850">
+                <span className="text-slate-500 font-semibold uppercase tracking-wider text-[9px] text-left">Token</span>
+                <span className="font-mono text-[9px] text-indigo-300 break-all select-all font-semibold text-left">
+                  {sessionStorage.getItem('vdi_token') || 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center bg-slate-950/45 p-2.5 rounded-xl border border-slate-850">
+                <span className="text-slate-500 font-semibold uppercase tracking-wider text-[9px]">Cipher</span>
+                <span className="font-semibold text-slate-400 text-[10px]">AES-256-GCM</span>
+              </div>
+            </div>
+
+            {/* Logout Button */}
+            <button
+              onClick={() => {
+                setIsProfileOpen(false);
+                handleVDILogout();
+              }}
+              id="vdi_logout_button"
+              className="w-full bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-rose-900/10 cursor-pointer"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Disconnect VDI Session
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Main Container */}
       <div className="max-w-7xl mx-auto px-4 py-8 relative z-10">
-        
-        {/* VDI Session Info & Logout (PRJ-B0FC-0057) - Top Right Corner */}
-        <div className="absolute top-4 right-4 md:right-8 bg-slate-900/90 backdrop-blur border border-slate-800 rounded-xl px-3 py-1.5 text-xs flex items-center gap-3 shadow-lg z-20 hover:border-slate-700 transition">
-          <div className="text-right">
-            <p className="text-[9px] text-slate-500 uppercase font-extrabold tracking-wider">VDI Session</p>
-            <p className="font-mono font-bold text-indigo-400">operator1</p>
-          </div>
-          <button
-            onClick={handleVDILogout}
-            id="vdi_logout_button"
-            className="p-1.5 rounded bg-slate-800 text-slate-400 hover:text-rose-450 hover:bg-slate-750 transition"
-            title="Disconnect VDI Session"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-          </button>
-        </div>
 
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-6 mb-8 gap-4">
@@ -715,6 +855,16 @@ function App() {
                 }`}
               >
                 Cost Optimizer
+              </button>
+              <button
+                onClick={() => setActiveView('inventory_sync')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeView === 'inventory_sync'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Inventory Sync
               </button>
             </div>
 
@@ -1848,7 +1998,7 @@ function App() {
                   {filteredLinks.length === 0 ? (
                     <p className="text-xs text-slate-505 italic text-center py-8">Select different filter criteria to populate chart.</p>
                   ) : (
-                    filteredLinks.map((lnk, idx) => {
+                    filteredLinks.map((lnk) => {
                       const maxCost = Math.max(...filteredLinks.map(l => l.accruedCost), 1);
                       const pct = (lnk.accruedCost / maxCost) * 100;
                       return (
@@ -1916,6 +2066,361 @@ function App() {
           </div>
         )}
 
+        {/* VIEW 6: INVENTORY SYNC DASHBOARD */}
+        {activeView === 'inventory_sync' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            {/* Left Column: Stats & Manual Trigger Form */}
+            <div className="lg:col-span-4 flex flex-col gap-8">
+              
+              {/* Regional Sync Status Cards */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                  Regional Status
+                </h2>
+
+                <div className="flex flex-col gap-4">
+                  {/* India */}
+                  <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-xl flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🇮🇳</span>
+                        <span className="font-bold text-slate-200 text-sm">India (IN)</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[9px] uppercase tracking-wider">
+                        Active
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-900">
+                      <div>Unit: <span className="text-indigo-300">Strips (1/10)</span></div>
+                      <div>Currency: <span className="text-indigo-300">INR</span></div>
+                      <div className="col-span-2">Compliance: <span className="text-slate-350">cdsco_license, gstin</span></div>
+                    </div>
+                  </div>
+
+                  {/* US */}
+                  <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-xl flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🇺🇸</span>
+                        <span className="font-bold text-slate-200 text-sm">United States (US)</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[9px] uppercase tracking-wider">
+                        Active
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-900">
+                      <div>Unit: <span className="text-indigo-300">Bottles (1/30)</span></div>
+                      <div>Currency: <span className="text-indigo-300">USD</span></div>
+                      <div className="col-span-2">Compliance: <span className="text-slate-350">fda_ndc, dscsa_uid</span></div>
+                    </div>
+                  </div>
+
+                  {/* EU */}
+                  <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-xl flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🇪🇺</span>
+                        <span className="font-bold text-slate-200 text-sm">Europe (EU)</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[9px] uppercase tracking-wider">
+                        Active
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400 font-mono mt-1 pt-1 border-t border-slate-900">
+                      <div>Unit: <span className="text-indigo-300">Packs (1/28)</span></div>
+                      <div>Currency: <span className="text-indigo-300">EUR</span></div>
+                      <div className="col-span-2">Compliance: <span className="text-slate-350">ema_fmd_serial, gdpr_residency</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Trigger Sync Form */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-xl pointer-events-none" />
+                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                  Manual Trigger Sync
+                </h2>
+
+                <form onSubmit={handleTriggerSync} className="flex flex-col gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      SKU Code
+                    </label>
+                    <input
+                      type="text"
+                      value={syncSku}
+                      onChange={(e) => setSyncSku(e.target.value)}
+                      required
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Item Name
+                    </label>
+                    <input
+                      type="text"
+                      value={syncItemName}
+                      onChange={(e) => setSyncItemName(e.target.value)}
+                      required
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Base Qty (Units)
+                      </label>
+                      <input
+                        type="number"
+                        value={syncQuantity}
+                        onChange={(e) => setSyncQuantity(e.target.value)}
+                        required
+                        min="1"
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Target Region
+                      </label>
+                      <select
+                        value={syncRegion}
+                        onChange={(e) => {
+                          setSyncRegion(e.target.value);
+                          if (e.target.value === 'IN') {
+                            setSyncComplianceData('{"cdsco_license": "DL-MUM-9988", "gstin": "27AAACP0120A1Z2"}');
+                          } else if (e.target.value === 'US') {
+                            setSyncComplianceData('{"fda_ndc": "0002-8215-01", "dscsa_uid": "DSCSA-1122"}');
+                          } else if (e.target.value === 'EU') {
+                            setSyncComplianceData('{"ema_fmd_serial": "SN-EMA-7722", "gdpr_residency": "DE-EMEA"}');
+                          }
+                        }}
+                        className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white"
+                      >
+                        <option value="IN">IN (India)</option>
+                        <option value="US">US (United States)</option>
+                        <option value="EU">EU (Europe)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Compliance JSON Data
+                    </label>
+                    <textarea
+                      value={syncComplianceData}
+                      onChange={(e) => setSyncComplianceData(e.target.value)}
+                      rows="3"
+                      required
+                      className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white font-mono"
+                    />
+                  </div>
+
+                  {syncError && (
+                    <div className="bg-rose-500/10 border border-rose-500/15 text-xs text-rose-450 p-3 rounded-xl">
+                      ❌ {syncError}
+                    </div>
+                  )}
+
+                  {syncSuccessMsg && (
+                    <div className="bg-emerald-500/10 border border-emerald-500/15 text-xs text-emerald-400 p-3 rounded-xl">
+                      ✅ {syncSuccessMsg}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isSyncing}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold py-2.5 px-4 rounded-xl text-sm transition mt-2 shadow-lg shadow-indigo-500/10 disabled:opacity-50"
+                  >
+                    {isSyncing ? 'Syncing...' : 'Trigger Regional Sync'}
+                  </button>
+                </form>
+              </div>
+
+            </div>
+
+            {/* Right Column: Sync Activity Logs & Success Metrics */}
+            <div className="lg:col-span-8 flex flex-col gap-8">
+              
+              {/* Sync Messaging Analytics */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Total Sync Messages */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400 border border-indigo-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-2m-4-1v8m0 0l3-3m-3 3L9 8m-5 5h2.586a1 1 0 01.707.293l2.414 2.414a1 1 0 00.707.293h3.172a1 1 0 00.707-.293l2.414-2.414a1 1 0 01.707-.293H20" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-505 uppercase tracking-wider font-semibold">Total Sync Actions</h3>
+                    <p className="text-2xl font-black text-white font-mono">{syncHistory.length}</p>
+                  </div>
+                </div>
+
+                {/* Successful Syncs */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-550 uppercase tracking-wider font-semibold">Sync Successful</h3>
+                    <p className="text-2xl font-black text-emerald-400 font-mono">
+                      {syncHistory.filter(x => x.status === 'COMPLETED').length}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Failed Syncs */}
+                <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-5 shadow-md flex items-center gap-4">
+                  <div className="p-3 bg-rose-500/10 rounded-xl text-rose-455 border border-rose-500/10">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] text-slate-550 uppercase tracking-wider font-semibold">Sync Failed</h3>
+                    <p className="text-2xl font-black text-rose-455 font-mono">
+                      {syncHistory.filter(x => x.status === 'FAILED').length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sync Messaging Logs */}
+              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-xl flex-grow flex flex-col">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
+                  <div>
+                    <h3 className="text-base font-bold text-white">Sync Messaging Activity Log</h3>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                      Real-time records of microservice executions
+                    </p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const res = await fetch('/sync/history');
+                      if (res.ok) {
+                        setSyncHistory(await res.json());
+                      }
+                    }}
+                    className="p-2 rounded bg-slate-800 hover:bg-slate-750 border border-slate-700 transition"
+                    title="Refresh logs"
+                  >
+                    <svg className="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8.89M9 11l3 3L22 4" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto max-h-[500px] flex-grow pr-1">
+                  {syncHistory.length === 0 ? (
+                    <div className="text-center py-16 text-slate-500 italic text-xs">
+                      No synchronization transactions recorded. Use the event dispatcher or sync form to trigger inventory syncs.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {syncHistory.map((log) => {
+                        const isSuccess = log.status === 'COMPLETED';
+                        return (
+                          <div
+                            key={log.sync_id}
+                            className={`p-4 rounded-xl border transition flex flex-col gap-2.5 ${
+                              isSuccess
+                                ? 'bg-slate-950/40 border-slate-850 hover:border-slate-800'
+                                : 'bg-rose-950/10 border-rose-950/20 hover:border-rose-900/25'
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-indigo-400 font-mono">{log.sync_id}</span>
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
+                                  log.target_region === 'IN' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/15' :
+                                  log.target_region === 'US' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/15' :
+                                  'bg-purple-500/10 text-purple-400 border border-purple-500/15'
+                                }`}>
+                                  {log.target_region}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-[10px] text-slate-505 font-mono">
+                                  {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : 'N/A'}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase font-mono ${
+                                  isSuccess
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                    : 'bg-rose-500/10 text-rose-450 border border-rose-500/20'
+                                }`}>
+                                  {log.status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs pt-1">
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">SKU Details</span>
+                                <span className="font-bold text-slate-200">{log.sku}</span>
+                                <span className="text-slate-400 text-[10px] block truncate">{log.item_name}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Converted Quantities</span>
+                                <span className="font-bold text-slate-200 font-mono">
+                                  {log.calculated_units?.local_quantity} {log.calculated_units?.unit_type}
+                                </span>
+                                <span className="text-slate-455 text-[10px] block">
+                                  from {log.base_quantity} base units
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Regional Financials</span>
+                                <span className="font-bold text-emerald-450 font-mono">
+                                  {log.calculated_units?.currency === 'INR' ? '₹' :
+                                   log.calculated_units?.currency === 'EUR' ? '€' : '$'}
+                                  {log.calculated_units?.rate} / unit
+                                </span>
+                                <span className="text-slate-455 text-[10px] block">
+                                  Base Divisor: {log.target_region === 'IN' ? '10' : log.target_region === 'US' ? '30' : '28'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {log.regulatory_compliance?.fields && (
+                              <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-900 mt-1">
+                                <span className="text-slate-500 text-[9px] uppercase tracking-wider block font-semibold mb-1">Regulatory Compliance Attestation</span>
+                                <div className="flex flex-wrap gap-2">
+                                  {Object.entries(log.regulatory_compliance.fields).map(([k, v]) => (
+                                    <span key={k} className="text-[10px] font-mono text-slate-350 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5">
+                                      <span className="text-indigo-400 font-bold">{k}</span>: {v}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
