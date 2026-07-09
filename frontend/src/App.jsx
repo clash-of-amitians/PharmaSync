@@ -111,6 +111,16 @@ function App() {
   const validSyncHistory = (syncHistory || []).filter(s => s && s.sync_id);
   const validNotifLogs = (notifLogs || []).filter(l => l && l.notification_id);
 
+  const formatTime = (ts) => {
+    if (!ts) return 'N/A';
+    try {
+      const d = new Date(ts);
+      return isNaN(d.getTime()) ? 'N/A' : d.toLocaleTimeString();
+    } catch {
+      return 'N/A';
+    }
+  };
+
   const handleVDILogin = async (e) => {
     e.preventDefault();
     setVdiLoading(true);
@@ -1588,7 +1598,7 @@ function App() {
                         {dnsLogs.map((log, idx) => (
                           <tr key={log.log_id || idx} className="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
                             <td className="py-2.5 px-3 font-mono text-slate-400">
-                              {new Date(log.timestamp).toLocaleTimeString()}
+                              {formatTime(log.timestamp)}
                             </td>
                             <td className="py-2.5 px-3">
                               <span className={`px-2 py-0.5 rounded font-bold uppercase text-[9px] ${
@@ -2509,7 +2519,7 @@ function App() {
                               </div>
                               <div className="flex items-center gap-3">
                                 <span className="text-[10px] text-slate-505 font-mono">
-                                  {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : 'N/A'}
+                                  {formatTime(log.timestamp)}
                                 </span>
                                 <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase font-mono ${
                                   isSuccess
@@ -2868,7 +2878,7 @@ function App() {
                               </div>
                               <div className="flex items-center gap-3">
                                 <span className="text-[10px] text-slate-500 font-mono">
-                                  {new Date(log.timestamp).toLocaleTimeString()}
+                                  {formatTime(log.timestamp)}
                                 </span>
                                 <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase font-mono ${
                                   isSuccess ? 'bg-emerald-500/10 text-emerald-450 border border-emerald-500/20' :
