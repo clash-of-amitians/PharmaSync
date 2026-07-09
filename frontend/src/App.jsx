@@ -221,8 +221,8 @@ function App() {
           setNotifChannel(configData.active_channel);
           setNotifRecipients(
             configData.active_channel === 'SMS' 
-              ? configData.sms_recipients.join(', ') 
-              : configData.email_recipients.join(', ')
+              ? (configData.sms_recipients || []).join(', ') 
+              : (configData.email_recipients || []).join(', ')
           );
         }
       } catch (err) {
@@ -2625,7 +2625,7 @@ function App() {
                         type="button"
                         onClick={() => {
                           setNotifChannel('SMS');
-                          if (notifConfig) setNotifRecipients(notifConfig.sms_recipients.join(', '));
+                          if (notifConfig) setNotifRecipients((notifConfig.sms_recipients || []).join(', '));
                         }}
                         className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border flex items-center justify-center gap-2 cursor-pointer ${
                           notifChannel === 'SMS'
@@ -2639,7 +2639,7 @@ function App() {
                         type="button"
                         onClick={() => {
                           setNotifChannel('EMAIL');
-                          if (notifConfig) setNotifRecipients(notifConfig.email_recipients.join(', '));
+                          if (notifConfig) setNotifRecipients((notifConfig.email_recipients || []).join(', '));
                         }}
                         className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border flex items-center justify-center gap-2 cursor-pointer ${
                           notifChannel === 'EMAIL'
@@ -2932,8 +2932,8 @@ function App() {
 
                               <div>
                                 <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Recipients</span>
-                                <span className="text-slate-300 font-mono text-[10px] block truncate" title={log.recipients.join(', ')}>
-                                  {log.recipients.join(', ')}
+                                <span className="text-slate-300 font-mono text-[10px] block truncate" title={(log.recipients || []).join(', ')}>
+                                  {(log.recipients || []).join(', ')}
                                 </span>
                                 <span className="text-emerald-450 font-bold text-[9px] uppercase tracking-wider flex items-center gap-1.5 mt-0.5">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
