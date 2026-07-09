@@ -415,6 +415,7 @@ function App() {
         setNetworkOnline(data.network_online);
         addTerminalLog(`⚠️ Simulated Connection toggled: ${data.network_online ? '🟢 ONLINE' : '🔴 OFFLINE (Outage Active)'}`);
         fetchBackendData();
+        fetchBandwidthData();
       }
     } catch (err) {
       addTerminalLog(`❌ Network Toggle Error: ${err.message}`);
