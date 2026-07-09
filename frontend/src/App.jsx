@@ -201,6 +201,36 @@ function App() {
       generateRandomEventId();
       addTerminalLog("System Initialized. Control Center active.");
     }, 0);
+
+    // Initial fetch of configuration data that rarely changes
+    const fetchInitialConfig = async () => {
+      try {
+        const dnsRes = await fetch('/dns/zones');
+        if (dnsRes.ok) {
+          const dnsData = await dnsRes.json();
+          setDnsZone(dnsData);
+        }
+      } catch (err) {
+        console.error("Error fetching initial DNS zones:", err);
+      }
+      try {
+        const configRes = await fetch('/notifications/config');
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          setNotifConfig(configData);
+          setNotifChannel(configData.active_channel);
+          setNotifRecipients(
+            configData.active_channel === 'SMS' 
+              ? configData.sms_recipients.join(', ') 
+              : configData.email_recipients.join(', ')
+          );
+        }
+      } catch (err) {
+        console.error("Error fetching initial notifications config:", err);
+      }
+    };
+    fetchInitialConfig();
+
     return () => clearTimeout(timer);
   }, []);
 
@@ -227,115 +257,102 @@ function App() {
         }
       }
 
-      // 2. Failed Events
-      const failedRes = await fetch('/events?status=FAILED');
-      if (failedRes.ok) {
-        const failedData = await failedRes.json();
-        setFailedEvents(failedData.events || []);
+      // 2. Fetch failed & completed events for events dashboard
+      if (activeView === 'events') {
+        const failedRes = await fetch('/events?status=FAILED');
+        if (failedRes.ok) {
+          const failedData = await failedRes.json();
+          setFailedEvents(failedData.events || []);
+        }
+
+        const completedRes = await fetch('/events?status=COMPLETED');
+        if (completedRes.ok) {
+          const compData = await completedRes.json();
+          setCompletedEvents(compData.events || []);
+        }
       }
 
-      // 3. Completed Events
-      const completedRes = await fetch('/events?status=COMPLETED');
-      if (completedRes.ok) {
-        const compData = await completedRes.json();
-        setCompletedEvents(compData.events || []);
+      // 3. Fetch DNS logs for DNS view
+      if (activeView === 'dns') {
+        const dnsLogsRes = await fetch('/dns/logs');
+        if (dnsLogsRes.ok) {
+          const dnsLogsData = await dnsLogsRes.json();
+          setDnsLogs(dnsLogsData.logs || []);
+        }
       }
 
-      // 4. DNS Zone
-      const dnsRes = await fetch('/dns/zones');
-      if (dnsRes.ok) {
-        const dnsData = await dnsRes.json();
-        setDnsZone(dnsData);
-      }
+      // 4. Fetch metrics only for cicd and order_metrics views (Prometheus scrape is heavy!)
+      if (activeView === 'cicd' || activeView === 'order_metrics') {
+        const metricsRes = await fetch('/metrics');
+        if (metricsRes.ok) {
+          const metricsText = await metricsRes.text();
+          const parsed = parsePrometheusMetrics(metricsText);
+          setParsedMetrics(parsed);
 
-      // 5. DNS Audit Logs
-      const dnsLogsRes = await fetch('/dns/logs');
-      if (dnsLogsRes.ok) {
-        const dnsLogsData = await dnsLogsRes.json();
-        setDnsLogs(dnsLogsData.logs || []);
-      }
+          // A. Sum download & upload totals for CI/CD Dashboard
+          const downloadTotal = calculateTotalBandwidth(parsed, 'download');
+          const uploadTotal = calculateTotalBandwidth(parsed, 'upload');
 
-      // 6. Prometheus Metrics Endpoint Scrape (Near Real-time parsing)
-      const metricsRes = await fetch('/metrics');
-      if (metricsRes.ok) {
-        const metricsText = await metricsRes.text();
-        const parsed = parsePrometheusMetrics(metricsText);
-        setParsedMetrics(parsed);
+          setMetricsHistory(prev => {
+            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const lastEntry = prev[prev.length - 1];
+            let dlSpeed = 0;
+            let ulSpeed = 0;
 
-        // A. Sum download & upload totals for CI/CD Dashboard
-        const downloadTotal = calculateTotalBandwidth(parsed, 'download');
-        const uploadTotal = calculateTotalBandwidth(parsed, 'upload');
+            if (lastEntry) {
+              const dlDiff = downloadTotal - lastEntry.downloadTotal;
+              const ulDiff = uploadTotal - lastEntry.uploadTotal;
+              dlSpeed = dlDiff > 0 ? dlDiff / 3 : 0;
+              ulSpeed = ulDiff > 0 ? ulDiff / 3 : 0;
+            }
 
-        setMetricsHistory(prev => {
-          const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          const lastEntry = prev[prev.length - 1];
-          let dlSpeed = 0;
-          let ulSpeed = 0;
+            return [...prev, { time: now, downloadTotal, uploadTotal, dlSpeed, ulSpeed }].slice(-20);
+          });
 
-          if (lastEntry) {
-            const dlDiff = downloadTotal - lastEntry.downloadTotal;
-            const ulDiff = uploadTotal - lastEntry.uploadTotal;
-            dlSpeed = dlDiff > 0 ? dlDiff / 3 : 0;
-            ulSpeed = ulDiff > 0 ? ulDiff / 3 : 0;
+          // B. Parse Order Latency and throughput rate for Order Event Metrics Dashboard
+          const successCount = calculateOrderMetric(parsed, 'SUCCESS');
+          const failureCount = calculateOrderMetric(parsed, 'FAILURE');
+          const totalCount = successCount + failureCount;
+          const failureRate = totalCount > 0 ? (failureCount / totalCount) * 100 : 0;
+          
+          let avgLatency = 0;
+          if (parsed['order_events_processing_duration_seconds_sum'] && parsed['order_events_processing_duration_seconds_count']) {
+            const latencySum = parsed['order_events_processing_duration_seconds_sum'].reduce((sum, m) => sum + m.value, 0);
+            const latencyCount = parsed['order_events_processing_duration_seconds_count'].reduce((sum, m) => sum + m.value, 0);
+            avgLatency = latencyCount > 0 ? (latencySum / latencyCount) * 1000 : 0; // Convert to ms
           }
 
-          return [...prev, { time: now, downloadTotal, uploadTotal, dlSpeed, ulSpeed }].slice(-20);
-        });
-
-        // B. Parse Order Latency and throughput rate for Order Event Metrics Dashboard
-        const successCount = calculateOrderMetric(parsed, 'SUCCESS');
-        const failureCount = calculateOrderMetric(parsed, 'FAILURE');
-        const totalCount = successCount + failureCount;
-        const failureRate = totalCount > 0 ? (failureCount / totalCount) * 100 : 0;
-        
-        let avgLatency = 0;
-        if (parsed['order_events_processing_duration_seconds_sum'] && parsed['order_events_processing_duration_seconds_count']) {
-          const latencySum = parsed['order_events_processing_duration_seconds_sum'].reduce((sum, m) => sum + m.value, 0);
-          const latencyCount = parsed['order_events_processing_duration_seconds_count'].reduce((sum, m) => sum + m.value, 0);
-          avgLatency = latencyCount > 0 ? (latencySum / latencyCount) * 1000 : 0; // Convert to ms
+          setOrderMetricsHistory(prev => {
+            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return [...prev, { time: now, successCount, failureCount, totalCount, failureRate, avgLatency }].slice(-20);
+          });
         }
-
-        setOrderMetricsHistory(prev => {
-          const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          return [...prev, { time: now, successCount, failureCount, totalCount, failureRate, avgLatency }].slice(-20);
-        });
       }
 
-      // 8. Fetch Sync History from Standalone Microservice
-      try {
-        const syncRes = await fetch('/sync/history');
-        if (syncRes.ok) {
-          const syncData = await syncRes.json();
-          setSyncHistory(syncData || []);
-        }
-      } catch (syncErr) {
-        console.error("Error fetching sync history:", syncErr);
-      }
-
-      // 9. Fetch Notifications Configuration and Logs
-      try {
-        const configRes = await fetch('/notifications/config');
-        if (configRes.ok) {
-          const configData = await configRes.json();
-          setNotifConfig(configData);
-          // Set local input states on first load
-          if (!notifRecipients) {
-            setNotifChannel(configData.active_channel);
-            setNotifRecipients(
-              configData.active_channel === 'SMS' 
-                ? configData.sms_recipients.join(', ') 
-                : configData.email_recipients.join(', ')
-            );
+      // 5. Fetch Sync History for inventory view
+      if (activeView === 'inventory_sync') {
+        try {
+          const syncRes = await fetch('/sync/history');
+          if (syncRes.ok) {
+            const syncData = await syncRes.json();
+            setSyncHistory(syncData || []);
           }
+        } catch (syncErr) {
+          console.error("Error fetching sync history:", syncErr);
         }
-        
-        const logsRes = await fetch('/notifications/logs');
-        if (logsRes.ok) {
-          const logsData = await logsRes.json();
-          setNotifLogs(logsData || []);
+      }
+
+      // 6. Fetch Notification logs for alerts view
+      if (activeView === 'notifications') {
+        try {
+          const logsRes = await fetch('/notifications/logs');
+          if (logsRes.ok) {
+            const logsData = await logsRes.json();
+            setNotifLogs(logsData || []);
+          }
+        } catch (notifErr) {
+          console.error("Error fetching notifications data:", notifErr);
         }
-      } catch (notifErr) {
-        console.error("Error fetching notifications data:", notifErr);
       }
     } catch (err) {
       console.error("API Polling Error:", err);
@@ -359,18 +376,15 @@ function App() {
     }
   };
 
-  // Poll for updates every 3 seconds
+  // Poll for updates every 3 seconds, immediately triggers on tab switch
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchBackendData();
-    }, 0);
+    fetchBackendData();
     const interval = setInterval(fetchBackendData, 3000);
     return () => {
-      clearTimeout(timer);
       clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [networkOnline]);
+  }, [networkOnline, activeView]);
 
   // Poll for bandwidth updates every 5 minutes (300000 ms)
   useEffect(() => {
