@@ -34,6 +34,10 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      '/notifications': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       '/sync': {
         target: 'http://localhost:8001',
         changeOrigin: true,

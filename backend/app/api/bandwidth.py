@@ -28,7 +28,7 @@ def get_bandwidth_links(
     last_update_time = current_time
     
     # Guarantee a sane default if elapsed is abnormal or first request
-    if elapsed <= 0 or elapsed > 60:
+    if elapsed <= 0 or elapsed > 305:
         elapsed = 3.0
         
     from app.services.failed_event_service import get_network_status

@@ -288,13 +288,6 @@ function App() {
         });
       }
 
-      // 7. Fetch Bandwidth and Cost metrics from Monitoring and Billing APIs
-      const bandwidthRes = await fetch('/bandwidth/links');
-      if (bandwidthRes.ok) {
-        const bandwidthData = await bandwidthRes.json();
-        setNetworkLinks(bandwidthData.links || []);
-      }
-
       // 8. Fetch Sync History from Standalone Microservice
       try {
         const syncRes = await fetch('/sync/history');
@@ -341,12 +334,37 @@ function App() {
     }
   };
 
+  const fetchBandwidthData = async () => {
+    try {
+      const bandwidthRes = await fetch('/bandwidth/links');
+      if (bandwidthRes.ok) {
+        const bandwidthData = await bandwidthRes.json();
+        setNetworkLinks(bandwidthData.links || []);
+      }
+    } catch (err) {
+      console.error("Bandwidth API Polling Error:", err);
+    }
+  };
+
   // Poll for updates every 3 seconds
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchBackendData();
     }, 0);
     const interval = setInterval(fetchBackendData, 3000);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [networkOnline]);
+
+  // Poll for bandwidth updates every 5 minutes (300000 ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchBandwidthData();
+    }, 0);
+    const interval = setInterval(fetchBandwidthData, 300000);
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
