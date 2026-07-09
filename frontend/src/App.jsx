@@ -108,6 +108,9 @@ function App() {
   const [notifSuccessMsg, setNotifSuccessMsg] = useState('');
   const [notifErrorMsg, setNotifErrorMsg] = useState('');
 
+  const validSyncHistory = (syncHistory || []).filter(s => s && s.sync_id);
+  const validNotifLogs = (notifLogs || []).filter(l => l && l.notification_id);
+
   const handleVDILogin = async (e) => {
     e.preventDefault();
     setVdiLoading(true);
@@ -2476,17 +2479,17 @@ function App() {
                 </div>
 
                 <div className="overflow-y-auto max-h-[500px] flex-grow pr-1">
-                  {syncHistory.length === 0 ? (
+                  {validSyncHistory.length === 0 ? (
                     <div className="text-center py-16 text-slate-500 italic text-xs">
                       No synchronization transactions recorded. Use the event dispatcher or sync form to trigger inventory syncs.
                     </div>
                   ) : (
                     <div className="flex flex-col gap-3">
-                      {syncHistory.map((log) => {
+                      {validSyncHistory.map((log, idx) => {
                         const isSuccess = log.status === 'COMPLETED';
                         return (
                           <div
-                            key={log.sync_id}
+                            key={`${log.sync_id}-${idx}`}
                             className={`p-4 rounded-xl border transition flex flex-col gap-2.5 ${
                               isSuccess
                                 ? 'bg-slate-950/40 border-slate-850 hover:border-slate-800'
@@ -2788,7 +2791,7 @@ function App() {
                   </div>
                   <div>
                     <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Total Alerts Sent</h3>
-                    <p className="text-xl font-black text-white font-mono">{notifLogs.length}</p>
+                    <p className="text-xl font-black text-white font-mono">{validNotifLogs.length}</p>
                   </div>
                 </div>
 
@@ -2802,9 +2805,9 @@ function App() {
                   <div>
                     <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Avg. Email Compression</h3>
                     <p className="text-xl font-black text-white font-mono">
-                      {notifLogs.filter(l => l.channel === 'EMAIL').length === 0 ? 'N/A' : (
-                        (notifLogs.filter(l => l.channel === 'EMAIL').reduce((acc, curr) => acc + curr.saving_percentage, 0) / 
-                        notifLogs.filter(l => l.channel === 'EMAIL').length).toFixed(1) + '%'
+                      {validNotifLogs.filter(l => l.channel === 'EMAIL').length === 0 ? 'N/A' : (
+                        (validNotifLogs.filter(l => l.channel === 'EMAIL').reduce((acc, curr) => acc + curr.saving_percentage, 0) / 
+                        validNotifLogs.filter(l => l.channel === 'EMAIL').length).toFixed(1) + '%'
                       )}
                     </p>
                   </div>
@@ -2837,18 +2840,18 @@ function App() {
                 </div>
 
                 <div className="overflow-y-auto max-h-[500px] flex-grow pr-1">
-                  {notifLogs.length === 0 ? (
+                  {validNotifLogs.length === 0 ? (
                     <div className="text-center py-20 text-slate-550 italic text-xs">
                       No CI/CD notifications dispatched yet. Wait for simulation cycles or trigger a manual test alert.
                     </div>
                   ) : (
                     <div className="flex flex-col gap-3">
-                      {notifLogs.map((log) => {
+                      {validNotifLogs.map((log, idx) => {
                         const isSuccess = log.status === 'SUCCESS';
                         const isFailed = log.status === 'FAILED';
                         return (
                           <div
-                            key={log.notification_id}
+                            key={`${log.notification_id}-${idx}`}
                             className={`p-4 rounded-xl border transition flex flex-col gap-3 ${
                               isFailed ? 'bg-rose-950/10 border-rose-900/15 hover:border-rose-900/25' :
                               'bg-slate-950/40 border-slate-850 hover:border-slate-800'
