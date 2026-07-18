@@ -108,6 +108,19 @@ function App() {
   const [notifSuccessMsg, setNotifSuccessMsg] = useState('');
   const [notifErrorMsg, setNotifErrorMsg] = useState('');
 
+  const validSyncHistory = (syncHistory || []).filter(s => s && s.sync_id);
+  const validNotifLogs = (notifLogs || []).filter(l => l && l.notification_id);
+
+  const formatTime = (ts) => {
+    if (!ts) return 'N/A';
+    try {
+      const d = new Date(ts);
+      return isNaN(d.getTime()) ? 'N/A' : d.toLocaleTimeString();
+    } catch {
+      return 'N/A';
+    }
+  };
+
   const handleVDILogin = async (e) => {
     e.preventDefault();
     setVdiLoading(true);
@@ -188,6 +201,36 @@ function App() {
       generateRandomEventId();
       addTerminalLog("System Initialized. Control Center active.");
     }, 0);
+
+    // Initial fetch of configuration data that rarely changes
+    const fetchInitialConfig = async () => {
+      try {
+        const dnsRes = await fetch('/dns/zones');
+        if (dnsRes.ok) {
+          const dnsData = await dnsRes.json();
+          setDnsZone(dnsData);
+        }
+      } catch (err) {
+        console.error("Error fetching initial DNS zones:", err);
+      }
+      try {
+        const configRes = await fetch('/notifications/config');
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          setNotifConfig(configData);
+          setNotifChannel(configData.active_channel);
+          setNotifRecipients(
+            configData.active_channel === 'SMS' 
+              ? (configData.sms_recipients || []).join(', ') 
+              : (configData.email_recipients || []).join(', ')
+          );
+        }
+      } catch (err) {
+        console.error("Error fetching initial notifications config:", err);
+      }
+    };
+    fetchInitialConfig();
+
     return () => clearTimeout(timer);
   }, []);
 
@@ -214,122 +257,102 @@ function App() {
         }
       }
 
-      // 2. Failed Events
-      const failedRes = await fetch('/events?status=FAILED');
-      if (failedRes.ok) {
-        const failedData = await failedRes.json();
-        setFailedEvents(failedData.events || []);
+      // 2. Fetch failed & completed events for events dashboard
+      if (activeView === 'events') {
+        const failedRes = await fetch('/events?status=FAILED');
+        if (failedRes.ok) {
+          const failedData = await failedRes.json();
+          setFailedEvents(failedData.events || []);
+        }
+
+        const completedRes = await fetch('/events?status=COMPLETED');
+        if (completedRes.ok) {
+          const compData = await completedRes.json();
+          setCompletedEvents(compData.events || []);
+        }
       }
 
-      // 3. Completed Events
-      const completedRes = await fetch('/events?status=COMPLETED');
-      if (completedRes.ok) {
-        const compData = await completedRes.json();
-        setCompletedEvents(compData.events || []);
+      // 3. Fetch DNS logs for DNS view
+      if (activeView === 'dns') {
+        const dnsLogsRes = await fetch('/dns/logs');
+        if (dnsLogsRes.ok) {
+          const dnsLogsData = await dnsLogsRes.json();
+          setDnsLogs(dnsLogsData.logs || []);
+        }
       }
 
-      // 4. DNS Zone
-      const dnsRes = await fetch('/dns/zones');
-      if (dnsRes.ok) {
-        const dnsData = await dnsRes.json();
-        setDnsZone(dnsData);
-      }
+      // 4. Fetch metrics only for cicd and order_metrics views (Prometheus scrape is heavy!)
+      if (activeView === 'cicd' || activeView === 'order_metrics') {
+        const metricsRes = await fetch('/metrics');
+        if (metricsRes.ok) {
+          const metricsText = await metricsRes.text();
+          const parsed = parsePrometheusMetrics(metricsText);
+          setParsedMetrics(parsed);
 
-      // 5. DNS Audit Logs
-      const dnsLogsRes = await fetch('/dns/logs');
-      if (dnsLogsRes.ok) {
-        const dnsLogsData = await dnsLogsRes.json();
-        setDnsLogs(dnsLogsData.logs || []);
-      }
+          // A. Sum download & upload totals for CI/CD Dashboard
+          const downloadTotal = calculateTotalBandwidth(parsed, 'download');
+          const uploadTotal = calculateTotalBandwidth(parsed, 'upload');
 
-      // 6. Prometheus Metrics Endpoint Scrape (Near Real-time parsing)
-      const metricsRes = await fetch('/metrics');
-      if (metricsRes.ok) {
-        const metricsText = await metricsRes.text();
-        const parsed = parsePrometheusMetrics(metricsText);
-        setParsedMetrics(parsed);
+          setMetricsHistory(prev => {
+            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const lastEntry = prev[prev.length - 1];
+            let dlSpeed = 0;
+            let ulSpeed = 0;
 
-        // A. Sum download & upload totals for CI/CD Dashboard
-        const downloadTotal = calculateTotalBandwidth(parsed, 'download');
-        const uploadTotal = calculateTotalBandwidth(parsed, 'upload');
+            if (lastEntry) {
+              const dlDiff = downloadTotal - lastEntry.downloadTotal;
+              const ulDiff = uploadTotal - lastEntry.uploadTotal;
+              dlSpeed = dlDiff > 0 ? dlDiff / 3 : 0;
+              ulSpeed = ulDiff > 0 ? ulDiff / 3 : 0;
+            }
 
-        setMetricsHistory(prev => {
-          const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          const lastEntry = prev[prev.length - 1];
-          let dlSpeed = 0;
-          let ulSpeed = 0;
+            return [...prev, { time: now, downloadTotal, uploadTotal, dlSpeed, ulSpeed }].slice(-20);
+          });
 
-          if (lastEntry) {
-            const dlDiff = downloadTotal - lastEntry.downloadTotal;
-            const ulDiff = uploadTotal - lastEntry.uploadTotal;
-            dlSpeed = dlDiff > 0 ? dlDiff / 3 : 0;
-            ulSpeed = ulDiff > 0 ? ulDiff / 3 : 0;
+          // B. Parse Order Latency and throughput rate for Order Event Metrics Dashboard
+          const successCount = calculateOrderMetric(parsed, 'SUCCESS');
+          const failureCount = calculateOrderMetric(parsed, 'FAILURE');
+          const totalCount = successCount + failureCount;
+          const failureRate = totalCount > 0 ? (failureCount / totalCount) * 100 : 0;
+          
+          let avgLatency = 0;
+          if (parsed['order_events_processing_duration_seconds_sum'] && parsed['order_events_processing_duration_seconds_count']) {
+            const latencySum = parsed['order_events_processing_duration_seconds_sum'].reduce((sum, m) => sum + m.value, 0);
+            const latencyCount = parsed['order_events_processing_duration_seconds_count'].reduce((sum, m) => sum + m.value, 0);
+            avgLatency = latencyCount > 0 ? (latencySum / latencyCount) * 1000 : 0; // Convert to ms
           }
 
-          return [...prev, { time: now, downloadTotal, uploadTotal, dlSpeed, ulSpeed }].slice(-20);
-        });
-
-        // B. Parse Order Latency and throughput rate for Order Event Metrics Dashboard
-        const successCount = calculateOrderMetric(parsed, 'SUCCESS');
-        const failureCount = calculateOrderMetric(parsed, 'FAILURE');
-        const totalCount = successCount + failureCount;
-        const failureRate = totalCount > 0 ? (failureCount / totalCount) * 100 : 0;
-        
-        let avgLatency = 0;
-        if (parsed['order_events_processing_duration_seconds_sum'] && parsed['order_events_processing_duration_seconds_count']) {
-          const latencySum = parsed['order_events_processing_duration_seconds_sum'].reduce((sum, m) => sum + m.value, 0);
-          const latencyCount = parsed['order_events_processing_duration_seconds_count'].reduce((sum, m) => sum + m.value, 0);
-          avgLatency = latencyCount > 0 ? (latencySum / latencyCount) * 1000 : 0; // Convert to ms
+          setOrderMetricsHistory(prev => {
+            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return [...prev, { time: now, successCount, failureCount, totalCount, failureRate, avgLatency }].slice(-20);
+          });
         }
-
-        setOrderMetricsHistory(prev => {
-          const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          return [...prev, { time: now, successCount, failureCount, totalCount, failureRate, avgLatency }].slice(-20);
-        });
       }
 
-      // 7. Fetch Bandwidth and Cost metrics from Monitoring and Billing APIs
-      const bandwidthRes = await fetch('/bandwidth/links');
-      if (bandwidthRes.ok) {
-        const bandwidthData = await bandwidthRes.json();
-        setNetworkLinks(bandwidthData.links || []);
-      }
-
-      // 8. Fetch Sync History from Standalone Microservice
-      try {
-        const syncRes = await fetch('/sync/history');
-        if (syncRes.ok) {
-          const syncData = await syncRes.json();
-          setSyncHistory(syncData || []);
-        }
-      } catch (syncErr) {
-        console.error("Error fetching sync history:", syncErr);
-      }
-
-      // 9. Fetch Notifications Configuration and Logs
-      try {
-        const configRes = await fetch('/notifications/config');
-        if (configRes.ok) {
-          const configData = await configRes.json();
-          setNotifConfig(configData);
-          // Set local input states on first load
-          if (!notifRecipients) {
-            setNotifChannel(configData.active_channel);
-            setNotifRecipients(
-              configData.active_channel === 'SMS' 
-                ? configData.sms_recipients.join(', ') 
-                : configData.email_recipients.join(', ')
-            );
+      // 5. Fetch Sync History for inventory view
+      if (activeView === 'inventory_sync') {
+        try {
+          const syncRes = await fetch('/sync/history');
+          if (syncRes.ok) {
+            const syncData = await syncRes.json();
+            setSyncHistory(syncData || []);
           }
+        } catch (syncErr) {
+          console.error("Error fetching sync history:", syncErr);
         }
-        
-        const logsRes = await fetch('/notifications/logs');
-        if (logsRes.ok) {
-          const logsData = await logsRes.json();
-          setNotifLogs(logsData || []);
+      }
+
+      // 6. Fetch Notification logs for alerts view
+      if (activeView === 'notifications') {
+        try {
+          const logsRes = await fetch('/notifications/logs');
+          if (logsRes.ok) {
+            const logsData = await logsRes.json();
+            setNotifLogs(logsData || []);
+          }
+        } catch (notifErr) {
+          console.error("Error fetching notifications data:", notifErr);
         }
-      } catch (notifErr) {
-        console.error("Error fetching notifications data:", notifErr);
       }
     } catch (err) {
       console.error("API Polling Error:", err);
@@ -341,12 +364,34 @@ function App() {
     }
   };
 
-  // Poll for updates every 3 seconds
+  const fetchBandwidthData = async () => {
+    try {
+      const bandwidthRes = await fetch('/bandwidth/links');
+      if (bandwidthRes.ok) {
+        const bandwidthData = await bandwidthRes.json();
+        setNetworkLinks(bandwidthData.links || []);
+      }
+    } catch (err) {
+      console.error("Bandwidth API Polling Error:", err);
+    }
+  };
+
+  // Poll for updates every 3 seconds, immediately triggers on tab switch
+  useEffect(() => {
+    fetchBackendData();
+    const interval = setInterval(fetchBackendData, 3000);
+    return () => {
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [networkOnline, activeView]);
+
+  // Poll for bandwidth updates every 5 minutes (300000 ms)
   useEffect(() => {
     const timer = setTimeout(() => {
-      fetchBackendData();
+      fetchBandwidthData();
     }, 0);
-    const interval = setInterval(fetchBackendData, 3000);
+    const interval = setInterval(fetchBandwidthData, 300000);
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
@@ -397,6 +442,7 @@ function App() {
         setNetworkOnline(data.network_online);
         addTerminalLog(`⚠️ Simulated Connection toggled: ${data.network_online ? '🟢 ONLINE' : '🔴 OFFLINE (Outage Active)'}`);
         fetchBackendData();
+        fetchBandwidthData();
       }
     } catch (err) {
       addTerminalLog(`❌ Network Toggle Error: ${err.message}`);
@@ -1566,7 +1612,7 @@ function App() {
                         {dnsLogs.map((log, idx) => (
                           <tr key={log.log_id || idx} className="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
                             <td className="py-2.5 px-3 font-mono text-slate-400">
-                              {new Date(log.timestamp).toLocaleTimeString()}
+                              {formatTime(log.timestamp)}
                             </td>
                             <td className="py-2.5 px-3">
                               <span className={`px-2 py-0.5 rounded font-bold uppercase text-[9px] ${
@@ -2457,17 +2503,17 @@ function App() {
                 </div>
 
                 <div className="overflow-y-auto max-h-[500px] flex-grow pr-1">
-                  {syncHistory.length === 0 ? (
+                  {validSyncHistory.length === 0 ? (
                     <div className="text-center py-16 text-slate-500 italic text-xs">
                       No synchronization transactions recorded. Use the event dispatcher or sync form to trigger inventory syncs.
                     </div>
                   ) : (
                     <div className="flex flex-col gap-3">
-                      {syncHistory.map((log) => {
+                      {validSyncHistory.map((log, idx) => {
                         const isSuccess = log.status === 'COMPLETED';
                         return (
                           <div
-                            key={log.sync_id}
+                            key={`${log.sync_id}-${idx}`}
                             className={`p-4 rounded-xl border transition flex flex-col gap-2.5 ${
                               isSuccess
                                 ? 'bg-slate-950/40 border-slate-850 hover:border-slate-800'
@@ -2487,7 +2533,7 @@ function App() {
                               </div>
                               <div className="flex items-center gap-3">
                                 <span className="text-[10px] text-slate-505 font-mono">
-                                  {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : 'N/A'}
+                                  {formatTime(log.timestamp)}
                                 </span>
                                 <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase font-mono ${
                                   isSuccess
@@ -2579,7 +2625,7 @@ function App() {
                         type="button"
                         onClick={() => {
                           setNotifChannel('SMS');
-                          if (notifConfig) setNotifRecipients(notifConfig.sms_recipients.join(', '));
+                          if (notifConfig) setNotifRecipients((notifConfig.sms_recipients || []).join(', '));
                         }}
                         className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border flex items-center justify-center gap-2 cursor-pointer ${
                           notifChannel === 'SMS'
@@ -2593,7 +2639,7 @@ function App() {
                         type="button"
                         onClick={() => {
                           setNotifChannel('EMAIL');
-                          if (notifConfig) setNotifRecipients(notifConfig.email_recipients.join(', '));
+                          if (notifConfig) setNotifRecipients((notifConfig.email_recipients || []).join(', '));
                         }}
                         className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border flex items-center justify-center gap-2 cursor-pointer ${
                           notifChannel === 'EMAIL'
@@ -2769,7 +2815,7 @@ function App() {
                   </div>
                   <div>
                     <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Total Alerts Sent</h3>
-                    <p className="text-xl font-black text-white font-mono">{notifLogs.length}</p>
+                    <p className="text-xl font-black text-white font-mono">{validNotifLogs.length}</p>
                   </div>
                 </div>
 
@@ -2783,9 +2829,9 @@ function App() {
                   <div>
                     <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Avg. Email Compression</h3>
                     <p className="text-xl font-black text-white font-mono">
-                      {notifLogs.filter(l => l.channel === 'EMAIL').length === 0 ? 'N/A' : (
-                        (notifLogs.filter(l => l.channel === 'EMAIL').reduce((acc, curr) => acc + curr.saving_percentage, 0) / 
-                        notifLogs.filter(l => l.channel === 'EMAIL').length).toFixed(1) + '%'
+                      {validNotifLogs.filter(l => l.channel === 'EMAIL').length === 0 ? 'N/A' : (
+                        (validNotifLogs.filter(l => l.channel === 'EMAIL').reduce((acc, curr) => acc + curr.saving_percentage, 0) / 
+                        validNotifLogs.filter(l => l.channel === 'EMAIL').length).toFixed(1) + '%'
                       )}
                     </p>
                   </div>
@@ -2818,18 +2864,18 @@ function App() {
                 </div>
 
                 <div className="overflow-y-auto max-h-[500px] flex-grow pr-1">
-                  {notifLogs.length === 0 ? (
+                  {validNotifLogs.length === 0 ? (
                     <div className="text-center py-20 text-slate-550 italic text-xs">
                       No CI/CD notifications dispatched yet. Wait for simulation cycles or trigger a manual test alert.
                     </div>
                   ) : (
                     <div className="flex flex-col gap-3">
-                      {notifLogs.map((log) => {
+                      {validNotifLogs.map((log, idx) => {
                         const isSuccess = log.status === 'SUCCESS';
                         const isFailed = log.status === 'FAILED';
                         return (
                           <div
-                            key={log.notification_id}
+                            key={`${log.notification_id}-${idx}`}
                             className={`p-4 rounded-xl border transition flex flex-col gap-3 ${
                               isFailed ? 'bg-rose-950/10 border-rose-900/15 hover:border-rose-900/25' :
                               'bg-slate-950/40 border-slate-850 hover:border-slate-800'
@@ -2846,7 +2892,7 @@ function App() {
                               </div>
                               <div className="flex items-center gap-3">
                                 <span className="text-[10px] text-slate-500 font-mono">
-                                  {new Date(log.timestamp).toLocaleTimeString()}
+                                  {formatTime(log.timestamp)}
                                 </span>
                                 <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase font-mono ${
                                   isSuccess ? 'bg-emerald-500/10 text-emerald-450 border border-emerald-500/20' :
@@ -2886,8 +2932,8 @@ function App() {
 
                               <div>
                                 <span className="text-slate-550 block text-[9px] uppercase tracking-wider font-semibold">Recipients</span>
-                                <span className="text-slate-300 font-mono text-[10px] block truncate" title={log.recipients.join(', ')}>
-                                  {log.recipients.join(', ')}
+                                <span className="text-slate-300 font-mono text-[10px] block truncate" title={(log.recipients || []).join(', ')}>
+                                  {(log.recipients || []).join(', ')}
                                 </span>
                                 <span className="text-emerald-450 font-bold text-[9px] uppercase tracking-wider flex items-center gap-1.5 mt-0.5">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
